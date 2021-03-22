@@ -1,33 +1,39 @@
 package main
 
-import "core:os"
-
 import img ".."
 
 main :: proc() {
-	WIDTH  :: 200;
-	HEIGHT :: 100;
+	if false {
+		generate();
+		return;
+	}
 
-	image := img.new_image(WIDTH, HEIGHT);
+	image := img.load_from_file("P6.ppm");
 	defer img.delete_image(&image);
 
-	for y := 0; y < HEIGHT; y += 1 {
-		for x := 0; x < WIDTH; x += 1 {
+	for y in 0 ..< image.height {
+		for x in 0 ..< image.width {
 			p := img.pixel_at(&image, x, y);
-			p.r = u8(255 * f64(x) / f64(WIDTH));
-			p.g = u8(255 * f64(y) / f64(HEIGHT));
+			//p.b = (p.b + 128) % 255;
+			p.r, p.g, p.b = p.b, p.r, p.g;
 		}
 	}
 
-	os.write_entire_file("P3.ppm", transmute([]byte)img.image_to_ppm_string(&image, .P3));
+	img.save_to_file(&image, "P6.ppm");
+}
 
-	for y := 0; y < HEIGHT; y += 1 {
-		for x := 0; x < WIDTH; x += 1 {
+generate :: proc() {
+	image := img.create(200, 100);
+	defer img.delete_image(&image);
+	using image;
+
+	for y in 0 ..< height {
+		for x in 0 ..< width {
 			p := img.pixel_at(&image, x, y);
-			p.g = u8(255 * f64(x) / f64(WIDTH));
-			p.r = u8(255 * f64(y) / f64(HEIGHT));
+			p.r = u8(255 * f64(x) / f64(width));
+			p.g = u8(255 * f64(y) / f64(height));
 		}
 	}
 
-	os.write_entire_file("P6.ppm", transmute([]byte)img.image_to_ppm_string(&image, .P6));
+	img.save_to_file(&image, "P6.ppm");
 }

@@ -1,8 +1,20 @@
 package odin_image
 
+/* @TODO: ONLY SUPPORTS PPM P6 RIGHT NOW
+	- PPM P3
+	- PPM P1,2,4,5
+	- BMP
+	...
+	- JPG
+	- PNG
+*/
+
 import "core:fmt"
 import "core:mem"
+import "core:strconv"
 import "core:strings"
+import "core:os"
+import "core:unicode"
 
 Pixel :: distinct [ 3 ] u8;
 
@@ -12,41 +24,147 @@ Image :: struct {
 	pixels: []Pixel,
 }
 
-new_image :: proc(width, height: int) -> Image {
-	return Image{ width, height, make([]Pixel, width * height) };
+init :: proc(using image: ^Image) {
+	pixels = make([]Pixel, width * height);
+}
+
+create :: proc(width, height: int) -> Image {
+	image := Image{ width, height, nil };
+	init(&image);
+	return image;
 }
 
 delete_image :: proc(using image: ^Image) {
 	delete(pixels);
 }
 
-pixel_index :: proc(w, x, y: int) -> int {
-	return y * w + x;
+pixel_index :: proc(using image: ^Image, x, y: int) -> int {
+	return y * width + x;
 }
 
 pixel_at :: proc(using image: ^Image, x, y: int) -> ^Pixel {
-	return &pixels[pixel_index(width, x, y)];
+	return &pixels[pixel_index(image, x, y)];
 }
 
 
 
-PPM_Type :: enum { P3, P6 }
 
-image_to_ppm_string :: proc(using image: ^Image, type: PPM_Type) -> string {
+load_from_file :: proc(file: string) -> Image {
+	// @TODO: error handling
+	data, _ := os.read_entire_file(file);
+	defer delete(data);
+	return load_from_memory(data);
+}
+
+save_to_file :: proc(image: ^Image, file: string) {
+	content := transmute([]byte) _image_to_ppm_string(image);
+	os.write_entire_file(file, content);
+}
+
+load_from_memory :: proc(data: []byte) -> Image {
+	ppm := _extract_ppm_header(data);
+
+	image := create(ppm.width, ppm.height);
+
+	bytes := 1;
+	if ppm.depth > 255 {
+		bytes = 2;
+	}
+	stride := 3 * bytes;
+
+	for i in 0 ..< ppm.width * ppm.height {
+		index := ppm.pixel_index + i * stride;
+		// @TODO: better way to convert to pixel?
+		image.pixels[i] = Pixel {
+			data[index + 0],
+			data[index + 1],
+			data[index + 2],
+		};
+	}
+
+	return image;
+}
+
+// @TODO: save_to_memory proc
+
+// @TODO: better way to hold header information?
+@(private)
+_PPM_Header :: struct {
+	type: string,
+	width: int,
+	height: int,
+	depth: int,
+	pixel_index: int,
+}
+
+@private
+_extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
+	using header;
+
+	Header_Fields :: enum int {
+		Type,
+		Width,
+		Height,
+		Depth,
+		Count,
+	};
+
+	// current header field being scanned, and range of field text
+	index := 0;
+	start, end := 0, 0;
+	already_in_space := true;
+
+	for d, i in data {
+		is_space := unicode.is_space(rune(d));
+
+		// do nothing if we havn't changed from field to space or vice versa
+		if is_space == already_in_space {
+			continue;
+		}
+
+		// now in space, set header field to current range
+		if is_space {
+			end = i;
+
+			field := string(data[start : end]);
+			#partial switch Header_Fields(index) {
+			case .Type:
+				type = field;
+			case .Width:
+				// @TODO: error handling
+				width, _ = strconv.parse_int(field);
+			case .Height:
+				height, _ = strconv.parse_int(field);
+			case .Depth:
+				depth, _ = strconv.parse_int(field);
+			}
+
+			index += 1;
+			already_in_space = true;
+		}
+		// no longer in space, reset start of range
+		else {
+			start = i;
+			already_in_space = false;
+		}
+
+		// break when you reach the data, which follows after single whitespace
+		if index >= int(Header_Fields.Count) {
+			pixel_index = i + 1;
+			break;
+		}
+	}
+
+	return header;
+}
+
+@(private)
+_image_to_ppm_string :: proc(using image: ^Image) -> string {
 	sb := strings.make_builder();
 
-	// TODO: PPMs can have different colour depth
+	// @TODO: PPMs can have different colour depth
 	PPM_DEPTH :: 255;
-
-	switch type {
-	case .P3:
-		fmt.sbprintf(&sb, "P3 %d %d %d\n", width, height, PPM_DEPTH);
-		for p in &pixels {
-			fmt.sbprintf(&sb, "%d %d %d\n", p.r, p.g, p.b);
-		}
-	case .P6:
-		fmt.sbprintf(&sb, "P6 %d %d %d\n%s", width, height, PPM_DEPTH, mem.slice_to_bytes(pixels));
-	}
+	fmt.sbprintf(&sb, "P6 %d %d %d\n%s", width, height, PPM_DEPTH, mem.slice_to_bytes(pixels));
 
 	return strings.to_string(sb);
 }
