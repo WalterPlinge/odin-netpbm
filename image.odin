@@ -1,6 +1,7 @@
 package odin_image
 
-/* @TODO: ONLY SUPPORTS PPM P6 RIGHT NOW
+/* @TODO: ONLY SUPPORTS PPM P6 255 RIGHT NOW
+	- Full PPM P6
 	- PPM P3
 	- PPM P1,2,4,5
 	- BMP
@@ -16,7 +17,7 @@ import "core:strings"
 import "core:os"
 import "core:unicode"
 
-Pixel :: distinct [ 3 ] u8;
+Pixel :: distinct [3]f64;
 
 Image :: struct {
 	width: int,
@@ -66,19 +67,16 @@ load_from_memory :: proc(data: []byte) -> Image {
 
 	image := create(ppm.width, ppm.height);
 
-	bytes := 1;
-	if ppm.depth > 255 {
-		bytes = 2;
-	}
-	stride := 3 * bytes;
-
 	for i in 0 ..< ppm.width * ppm.height {
-		index := ppm.pixel_index + i * stride;
+		pixel_data := data[ppm.pixel_index:];
+		// @TODO: handle 2 bytes per pixel value
+		stride :: 3;
+		index := i * stride;
 		// @TODO: better way to convert to pixel?
 		image.pixels[i] = Pixel {
-			data[index + 0],
-			data[index + 1],
-			data[index + 2],
+			f64(pixel_data[index + 0]) * f64(ppm.depth),
+			f64(pixel_data[index + 1]) * f64(ppm.depth),
+			f64(pixel_data[index + 2]) * f64(ppm.depth),
 		};
 	}
 
@@ -164,7 +162,15 @@ _image_to_ppm_string :: proc(using image: ^Image) -> string {
 
 	// @TODO: PPMs can have different colour depth
 	PPM_DEPTH :: 255;
-	fmt.sbprintf(&sb, "P6 %d %d %d\n%s", width, height, PPM_DEPTH, mem.slice_to_bytes(pixels));
+	fmt.sbprintf(&sb, "P6 %d %d %d\n", width, height, PPM_DEPTH);
+	for p in &pixels {
+		bytes := []byte{
+			byte(PPM_DEPTH * p.r),
+			byte(PPM_DEPTH * p.g),
+			byte(PPM_DEPTH * p.b),
+		};
+		strings.write_bytes(&sb, bytes);
+	}
 
 	return strings.to_string(sb);
 }

@@ -30,8 +30,8 @@ generate :: proc() {
 	for y in 0 ..< height {
 		for x in 0 ..< width {
 			p := img.pixel_at(&image, x, y);
-			p.r = u8(255 * f64(x) / f64(width));
-			p.g = u8(255 * f64(y) / f64(height));
+			p.r = f64(x) / f64(width);
+			p.g = f64(y) / f64(height);
 		}
 	}
 
