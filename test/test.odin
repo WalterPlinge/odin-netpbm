@@ -3,7 +3,7 @@ package main
 import img ".."
 
 main :: proc() {
-	if false {
+	if true {
 		generate();
 		return;
 	}

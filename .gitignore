@@ -81,7 +81,8 @@
 ### vscode ###
 .vscode/*
 !.vscode/settings.json
-!.vscode/tasks.json
+# skip tasks
+.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
 *.code-workspace

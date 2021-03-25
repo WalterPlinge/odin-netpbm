@@ -86,7 +86,7 @@ load_from_memory :: proc(data: []byte) -> Image {
 // @TODO: save_to_memory proc
 
 // @TODO: better way to hold header information?
-@(private)
+@private
 _PPM_Header :: struct {
 	type: string,
 	width: int,
@@ -156,19 +156,37 @@ _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
 	return header;
 }
 
-@(private)
+@private
 _image_to_ppm_string :: proc(using image: ^Image) -> string {
+	// @TODO: calculate specific capacity for fewer allocations
+	// if it already has the capacity the loops can be simplified to just write the bytes
 	sb := strings.make_builder();
 
 	// @TODO: PPMs can have different colour depth
-	PPM_DEPTH :: 255;
-	fmt.sbprintf(&sb, "P6 %d %d %d\n", width, height, PPM_DEPTH);
-	for p in &pixels {
-		bytes := []byte{
-			byte(PPM_DEPTH * p.r),
-			byte(PPM_DEPTH * p.g),
-			byte(PPM_DEPTH * p.b),
-		};
+	PPM_DEPTH :: 65535;
+	fmt.sbprintf(&sb, "P6 %v %v %v\n", width, height, PPM_DEPTH);
+
+	channels := len(Pixel);
+	if PPM_DEPTH <= int(max(byte)) {
+		pixel_data := make([]byte, width * height * channels);
+		for p, i in &pixels {
+			n := i * channels;
+			pixel_data[n + 0] = byte(p.r * PPM_DEPTH);
+			pixel_data[n + 1] = byte(p.g * PPM_DEPTH);
+			pixel_data[n + 2] = byte(p.b * PPM_DEPTH);
+		}
+		bytes := mem.slice_to_bytes(pixel_data);
+		strings.write_bytes(&sb, bytes);
+	} else {
+		// @TODO: irfanview expects big-endian, is this always the case?
+		pixel_data := make([]u16be, width * height * channels);
+		for p, i in &pixels {
+			n := i * channels;
+			pixel_data[n + 0] = u16be(u16(p.r * PPM_DEPTH));
+			pixel_data[n + 1] = u16be(u16(p.g * PPM_DEPTH));
+			pixel_data[n + 2] = u16be(u16(p.b * PPM_DEPTH));
+		}
+		bytes := mem.slice_to_bytes(pixel_data);
 		strings.write_bytes(&sb, bytes);
 	}
 
