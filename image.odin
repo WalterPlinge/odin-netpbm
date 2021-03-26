@@ -52,32 +52,47 @@ pixel_at :: proc(using image: ^Image, x, y: int) -> ^Pixel {
 
 
 load_from_file :: proc(file: string) -> Image {
-	// @TODO: error handling
+	// @HACK: error handling
 	data, _ := os.read_entire_file(file);
 	defer delete(data);
 	return load_from_memory(data);
 }
 
 save_to_file :: proc(image: ^Image, file: string) {
-	os.write_entire_file(file, save_to_memory(image));
+	data := save_to_memory(image);
+	os.write_entire_file(file, data);
 }
 
 load_from_memory :: proc(data: []byte) -> Image {
+	// @HACK: handle channels better plz
+	CHANNELS :: len(Pixel);
+
 	ppm := _extract_ppm_header(data);
+	using ppm;
 
-	image := create(ppm.width, ppm.height);
+	image := create(width, height);
 
-	for i in 0 ..< ppm.width * ppm.height {
-		pixel_data := data[ppm.pixel_index:];
-		// @TODO: handle 2 bytes per pixel value
-		stride :: 3;
-		index := i * stride;
-		// @TODO: better way to convert to pixel?
-		image.pixels[i] = Pixel {
-			f64(pixel_data[index + 0]) * f64(ppm.depth),
-			f64(pixel_data[index + 1]) * f64(ppm.depth),
-			f64(pixel_data[index + 2]) * f64(ppm.depth),
-		};
+	if depth <= u16(max(byte)) {
+		pixel_data := data[pixel_index:];
+		for i in 0 ..< width * height {
+			n := i * CHANNELS;
+			image.pixels[i] = Pixel {
+				f64(pixel_data[n + 0]) / f64(depth),
+				f64(pixel_data[n + 1]) / f64(depth),
+				f64(pixel_data[n + 2]) / f64(depth),
+			};
+		}
+	} else {
+		pixel_data := mem.slice_data_cast([]u16be, data[pixel_index:]);
+		for i in 0 ..< width * height {
+			n := i * CHANNELS;
+			image.pixels[i] = Pixel {
+				// @HACK: endian-ness is broken, cast to base type first
+				f64(u16(pixel_data[n + 0])) / f64(depth),
+				f64(u16(pixel_data[n + 1])) / f64(depth),
+				f64(u16(pixel_data[n + 2])) / f64(depth),
+			};
+		}
 	}
 
 	return image;
@@ -86,6 +101,7 @@ load_from_memory :: proc(data: []byte) -> Image {
 save_to_memory :: proc(using image: ^Image) -> []byte {
 	// @TODO: Pass in option struct for depth and eventual format
 	PPM_DEPTH :: 65535;
+	// @HACK: handle channels better plz
 	CHANNELS  :: len(Pixel);
 
 	header := fmt.tprintf("P6 %v %v %v\n", width, height, PPM_DEPTH);
@@ -107,10 +123,10 @@ save_to_memory :: proc(using image: ^Image) -> []byte {
 			}
 		}
 	} else {
-		// @TODO: irfanview expects big-endian, is this always the case?
-		pixel_data := make([]u16be, width * height * CHANNELS);
+		// @XXX: irfanview expects big-endian, is this always the case?
 		for p in &pixels {
 			for c in p {
+				// @HACK: endian-ness is broken, cast to base type first
 				v := u16be(u16(c * PPM_DEPTH));
 				strings.write_bytes(&sb, mem.ptr_to_bytes(&v));
 			}
@@ -120,7 +136,7 @@ save_to_memory :: proc(using image: ^Image) -> []byte {
 	return transmute([]byte)strings.to_string(sb);
 }
 
-// @TODO: better way to hold header information?
+// @XXX: better way to hold header information?
 @private
 _PPM_Header :: struct {
 	type: u8,
@@ -160,7 +176,7 @@ _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
 			end = i;
 
 			field := string(data[start : end]);
-			// @TODO: error handling
+			// @BUG: error handling
 			#partial switch Header_Fields(index) {
 				case .Type:
 					value, _ := strconv.parse_int(field[1:]);
