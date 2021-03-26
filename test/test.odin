@@ -1,4 +1,4 @@
-package main
+package test
 
 import "core:fmt"
 import "core:time"
