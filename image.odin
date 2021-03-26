@@ -2,6 +2,7 @@ package odin_image
 
 /* @TODO: ONLY SUPPORTS PPM P6 255 RIGHT NOW
 	- Full PPM P6
+		- Options struct
 	- PPM P3
 	- PPM P1,2,4,5
 	- BMP
@@ -58,8 +59,7 @@ load_from_file :: proc(file: string) -> Image {
 }
 
 save_to_file :: proc(image: ^Image, file: string) {
-	content := transmute([]byte) _image_to_ppm_string(image);
-	os.write_entire_file(file, content);
+	os.write_entire_file(file, save_to_memory(image));
 }
 
 load_from_memory :: proc(data: []byte) -> Image {
@@ -83,16 +83,51 @@ load_from_memory :: proc(data: []byte) -> Image {
 	return image;
 }
 
-// @TODO: save_to_memory proc
+save_to_memory :: proc(using image: ^Image) -> []byte {
+	// @TODO: Pass in option struct for depth and eventual format
+	PPM_DEPTH :: 65535;
+	CHANNELS  :: len(Pixel);
+
+	header := fmt.tprintf("P6 %v %v %v\n", width, height, PPM_DEPTH);
+
+	pixel_capacity := width * height * CHANNELS;
+	if PPM_DEPTH > int(max(byte)) {
+		pixel_capacity *= 2;
+	}
+
+	capacity := len(header) + pixel_capacity;
+
+	sb := strings.make_builder(0, capacity);
+	strings.write_string(&sb, header);
+
+	if PPM_DEPTH <= int(max(byte)) {
+		for p in &pixels {
+			for c in p {
+				strings.write_byte(&sb, byte(c * PPM_DEPTH));
+			}
+		}
+	} else {
+		// @TODO: irfanview expects big-endian, is this always the case?
+		pixel_data := make([]u16be, width * height * CHANNELS);
+		for p in &pixels {
+			for c in p {
+				v := u16be(u16(c * PPM_DEPTH));
+				strings.write_bytes(&sb, mem.ptr_to_bytes(&v));
+			}
+		}
+	}
+
+	return transmute([]byte)strings.to_string(sb);
+}
 
 // @TODO: better way to hold header information?
 @private
 _PPM_Header :: struct {
-	type: string,
+	type: u8,
 	width: int,
 	height: int,
-	depth: int,
-	pixel_index: int,
+	depth: u16,
+	pixel_index: u8,
 }
 
 @private
@@ -125,16 +160,20 @@ _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
 			end = i;
 
 			field := string(data[start : end]);
+			// @TODO: error handling
 			#partial switch Header_Fields(index) {
-			case .Type:
-				type = field;
-			case .Width:
-				// @TODO: error handling
-				width, _ = strconv.parse_int(field);
-			case .Height:
-				height, _ = strconv.parse_int(field);
-			case .Depth:
-				depth, _ = strconv.parse_int(field);
+				case .Type:
+					value, _ := strconv.parse_int(field[1:]);
+					type = u8(value);
+				case .Width:
+					value, _ := strconv.parse_int(field);
+					width = value;
+				case .Height:
+					value, _ := strconv.parse_int(field);
+					height = value;
+				case .Depth:
+					value, _ := strconv.parse_int(field);
+					depth = u16(value);
 			}
 
 			index += 1;
@@ -148,47 +187,10 @@ _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
 
 		// break when you reach the data, which follows after single whitespace
 		if index >= int(Header_Fields.Count) {
-			pixel_index = i + 1;
+			pixel_index = u8(i + 1);
 			break;
 		}
 	}
 
 	return header;
-}
-
-@private
-_image_to_ppm_string :: proc(using image: ^Image) -> string {
-	// @TODO: calculate specific capacity for fewer allocations
-	// if it already has the capacity the loops can be simplified to just write the bytes
-	sb := strings.make_builder();
-
-	// @TODO: PPMs can have different colour depth
-	PPM_DEPTH :: 65535;
-	fmt.sbprintf(&sb, "P6 %v %v %v\n", width, height, PPM_DEPTH);
-
-	channels := len(Pixel);
-	if PPM_DEPTH <= int(max(byte)) {
-		pixel_data := make([]byte, width * height * channels);
-		for p, i in &pixels {
-			n := i * channels;
-			pixel_data[n + 0] = byte(p.r * PPM_DEPTH);
-			pixel_data[n + 1] = byte(p.g * PPM_DEPTH);
-			pixel_data[n + 2] = byte(p.b * PPM_DEPTH);
-		}
-		bytes := mem.slice_to_bytes(pixel_data);
-		strings.write_bytes(&sb, bytes);
-	} else {
-		// @TODO: irfanview expects big-endian, is this always the case?
-		pixel_data := make([]u16be, width * height * channels);
-		for p, i in &pixels {
-			n := i * channels;
-			pixel_data[n + 0] = u16be(u16(p.r * PPM_DEPTH));
-			pixel_data[n + 1] = u16be(u16(p.g * PPM_DEPTH));
-			pixel_data[n + 2] = u16be(u16(p.b * PPM_DEPTH));
-		}
-		bytes := mem.slice_to_bytes(pixel_data);
-		strings.write_bytes(&sb, bytes);
-	}
-
-	return strings.to_string(sb);
 }
