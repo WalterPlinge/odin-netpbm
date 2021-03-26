@@ -1,9 +1,12 @@
 package main
 
+import "core:fmt"
+import "core:time"
+
 import img ".."
 
 main :: proc() {
-	if true {
+	if false {
 		generate();
 		return;
 	}
@@ -37,3 +40,9 @@ generate :: proc() {
 
 	img.save_to_file(&image, "P6.ppm");
 }
+
+/*
+Timer:
+	start := time.now();
+	defer fmt.eprintln("Time:", time.diff(start, time.now()));
+*/
