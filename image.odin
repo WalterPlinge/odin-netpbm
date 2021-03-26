@@ -60,7 +60,7 @@ load_from_file :: proc(file: string) -> Image {
 }
 
 save_to_file :: proc(image: ^Image, file: string) {
-	data := save_to_memory(image);
+	data := save_to_memory(image, PPM_Options{ depth = 255 });
 	defer delete(data);
 	// @FIXME: error handling
 	os.write_entire_file(file, data);
@@ -101,18 +101,16 @@ load_from_memory :: proc(data: []byte) -> Image {
 	return image;
 }
 
-save_to_memory :: proc(using image: ^Image) -> []byte {
+save_to_memory :: proc(using image: ^Image, options: PPM_Options) -> []byte {
 	// @XXX: can this function be optimised?
 
-	// @TODO: pass in option struct for depth and eventual format
-	PPM_DEPTH :: 65535;
 	// @HACK: handle channels better plz
 	CHANNELS  :: len(Pixel);
 
-	header := fmt.tprintf("P6 %v %v %v\n", width, height, PPM_DEPTH);
+	header := fmt.tprintf("P6 %v %v %v\n", width, height, options.depth);
 
 	pixel_capacity := width * height * CHANNELS;
-	if PPM_DEPTH > int(max(byte)) {
+	if options.depth > u16(max(byte)) {
 		pixel_capacity *= 2;
 	}
 
@@ -123,12 +121,12 @@ save_to_memory :: proc(using image: ^Image) -> []byte {
 		data[i] = header[i];
 	}
 
-	if PPM_DEPTH <= int(max(byte)) {
+	if options.depth <= u16(max(byte)) {
 		for px, px_idx in &pixels {
 			px_in_data := len(header) + px_idx * CHANNELS;
 			for ch, ch_idx in px {
 				ch_in_data := px_in_data + ch_idx;
-				data[ch_in_data] = byte(ch * PPM_DEPTH);
+				data[ch_in_data] = byte(ch * Float(options.depth));
 			}
 		}
 	} else {
@@ -138,7 +136,7 @@ save_to_memory :: proc(using image: ^Image) -> []byte {
 			for ch, ch_idx in px {
 				ch_in_data := px_in_data + ch_idx * 2;
 				// @HACK: endian-ness is broken, cast to base type first
-				value := u16be(u16(ch * PPM_DEPTH));
+				value := u16be(u16(ch * Float(options.depth)));
 				bytes := mem.ptr_to_bytes(&value);
 				for b, b_idx in bytes {
 					b_in_data := ch_in_data + b_idx;
@@ -149,6 +147,10 @@ save_to_memory :: proc(using image: ^Image) -> []byte {
 	}
 
 	return data;
+}
+
+PPM_Options :: struct {
+	depth: u16,
 }
 
 // @XXX: better way to hold header information?
