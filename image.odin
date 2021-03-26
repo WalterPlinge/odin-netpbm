@@ -1,6 +1,6 @@
 package odin_image
 
-/* @TODO: ONLY SUPPORTS PPM P6 255 RIGHT NOW
+/* @TODO: ONLY SUPPORTS PPM P6 RIGHT NOW
 	- Full PPM P6
 		- Options struct
 	- PPM P3
@@ -52,7 +52,7 @@ pixel_at :: proc(using image: ^Image, x, y: int) -> ^Pixel {
 
 
 load_from_file :: proc(file: string) -> Image {
-	// @HACK: error handling
+	// @FIXME: error handling
 	data, _ := os.read_entire_file(file);
 	defer delete(data);
 	return load_from_memory(data);
@@ -60,6 +60,8 @@ load_from_file :: proc(file: string) -> Image {
 
 save_to_file :: proc(image: ^Image, file: string) {
 	data := save_to_memory(image);
+	defer delete(data);
+	// @FIXME: error handling
 	os.write_entire_file(file, data);
 }
 
@@ -99,7 +101,9 @@ load_from_memory :: proc(data: []byte) -> Image {
 }
 
 save_to_memory :: proc(using image: ^Image) -> []byte {
-	// @TODO: Pass in option struct for depth and eventual format
+	// @XXX: can this function be optimised?
+
+	// @TODO: pass in option struct for depth and eventual format
 	PPM_DEPTH :: 65535;
 	// @HACK: handle channels better plz
 	CHANNELS  :: len(Pixel);
@@ -113,27 +117,37 @@ save_to_memory :: proc(using image: ^Image) -> []byte {
 
 	capacity := len(header) + pixel_capacity;
 
-	sb := strings.make_builder(0, capacity);
-	strings.write_string(&sb, header);
+	data := make([]byte, capacity);
+	for i in 0 ..< len(header) {
+		data[i] = header[i];
+	}
 
 	if PPM_DEPTH <= int(max(byte)) {
-		for p in &pixels {
-			for c in p {
-				strings.write_byte(&sb, byte(c * PPM_DEPTH));
+		for px, px_idx in &pixels {
+			px_in_data := len(header) + px_idx * CHANNELS;
+			for ch, ch_idx in px {
+				ch_in_data := px_in_data + ch_idx;
+				data[ch_in_data] = byte(ch * PPM_DEPTH);
 			}
 		}
 	} else {
 		// @XXX: irfanview expects big-endian, is this always the case?
-		for p in &pixels {
-			for c in p {
+		for px, px_idx in &pixels {
+			px_in_data := len(header) + px_idx * CHANNELS * 2;
+			for ch, ch_idx in px {
+				ch_in_data := px_in_data + ch_idx * 2;
 				// @HACK: endian-ness is broken, cast to base type first
-				v := u16be(u16(c * PPM_DEPTH));
-				strings.write_bytes(&sb, mem.ptr_to_bytes(&v));
+				value := u16be(u16(ch * PPM_DEPTH));
+				bytes := mem.ptr_to_bytes(&value);
+				for b, b_idx in bytes {
+					b_in_data := ch_in_data + b_idx;
+					data[b_in_data] = b;
+				}
 			}
 		}
 	}
 
-	return transmute([]byte)strings.to_string(sb);
+	return data;
 }
 
 // @XXX: better way to hold header information?
@@ -176,7 +190,7 @@ _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
 			end = i;
 
 			field := string(data[start : end]);
-			// @BUG: error handling
+			// @FIXME: error handling
 			#partial switch Header_Fields(index) {
 				case .Type:
 					value, _ := strconv.parse_int(field[1:]);

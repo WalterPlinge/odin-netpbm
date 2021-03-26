@@ -26,7 +26,8 @@ main :: proc() {
 }
 
 generate :: proc() {
-	image := img.create(200, 100);
+	HEIGHT :: 1000;
+	image := img.create(HEIGHT << 1, HEIGHT);
 	defer img.delete_image(&image);
 	using image;
 
