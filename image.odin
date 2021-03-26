@@ -18,7 +18,8 @@ import "core:strings"
 import "core:os"
 import "core:unicode"
 
-Pixel :: distinct [3]f64;
+Float :: f64;
+Pixel :: distinct [3]Float;
 
 Image :: struct {
 	width: int,
@@ -79,9 +80,9 @@ load_from_memory :: proc(data: []byte) -> Image {
 		for i in 0 ..< width * height {
 			n := i * CHANNELS;
 			image.pixels[i] = Pixel {
-				f64(pixel_data[n + 0]) / f64(depth),
-				f64(pixel_data[n + 1]) / f64(depth),
-				f64(pixel_data[n + 2]) / f64(depth),
+				Float(pixel_data[n + 0]) / Float(depth),
+				Float(pixel_data[n + 1]) / Float(depth),
+				Float(pixel_data[n + 2]) / Float(depth),
 			};
 		}
 	} else {
@@ -90,9 +91,9 @@ load_from_memory :: proc(data: []byte) -> Image {
 			n := i * CHANNELS;
 			image.pixels[i] = Pixel {
 				// @HACK: endian-ness is broken, cast to base type first
-				f64(u16(pixel_data[n + 0])) / f64(depth),
-				f64(u16(pixel_data[n + 1])) / f64(depth),
-				f64(u16(pixel_data[n + 2])) / f64(depth),
+				Float(u16(pixel_data[n + 0])) / Float(depth),
+				Float(u16(pixel_data[n + 1])) / Float(depth),
+				Float(u16(pixel_data[n + 2])) / Float(depth),
 			};
 		}
 	}

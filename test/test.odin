@@ -11,7 +11,10 @@ main :: proc() {
 		return;
 	}
 
+	start : time.Time;
+	start = time.now();
 	image := img.load_from_file("P6.ppm");
+	fmt.eprintln("Time (load):", time.diff(start, time.now()));
 	defer img.delete_image(&image);
 
 	for y in 0 ..< image.height {
@@ -22,7 +25,9 @@ main :: proc() {
 		}
 	}
 
+	start = time.now();
 	img.save_to_file(&image, "P6.ppm");
+	fmt.eprintln("Time (save):", time.diff(start, time.now()));
 }
 
 generate :: proc() {
@@ -34,8 +39,8 @@ generate :: proc() {
 	for y in 0 ..< height {
 		for x in 0 ..< width {
 			p := img.pixel_at(&image, x, y);
-			p.r = f64(x) / f64(width);
-			p.g = f64(y) / f64(height);
+			p.r = img.Float(x) / img.Float(width);
+			p.g = img.Float(y) / img.Float(height);
 		}
 	}
 
