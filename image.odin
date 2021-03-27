@@ -1,8 +1,8 @@
 package odin_image
 
-/* @TODO: ONLY SUPPORTS PPM P6 RIGHT NOW
-	- Full PPM P6
-		- Options struct
+/* @TODO:
+	- ! ONLY SUPPORTS PPM P6 RIGHT NOW
+	- Gamma adjustment
 	- PPM P3
 	- PPM P1,2,4,5
 	- BMP
@@ -18,54 +18,50 @@ import "core:strings"
 import "core:os"
 import "core:unicode"
 
+
+
 Float :: f64;
 Pixel :: distinct [3]Float;
-
 Image :: struct {
 	width: int,
 	height: int,
 	pixels: []Pixel,
 }
-
 init :: proc(using image: ^Image) {
 	pixels = make([]Pixel, width * height);
 }
-
 create :: proc(width, height: int) -> Image {
 	image := Image{ width, height, nil };
 	init(&image);
 	return image;
 }
-
 delete_image :: proc(using image: ^Image) {
 	delete(pixels);
 }
-
 pixel_index :: proc(using image: ^Image, x, y: int) -> int {
 	return y * width + x;
 }
-
 pixel_at :: proc(using image: ^Image, x, y: int) -> ^Pixel {
 	return &pixels[pixel_index(image, x, y)];
 }
 
 
 
-
+Options :: union {
+	PPM_Options,
+}
 load_from_file :: proc(file: string) -> Image {
 	// @FIXME: error handling
 	data, _ := os.read_entire_file(file);
 	defer delete(data);
 	return load_from_memory(data);
 }
-
-save_to_file :: proc(image: ^Image, file: string) {
-	data := save_to_memory(image, PPM_Options{ depth = 255 });
+save_to_file :: proc(image: ^Image, file: string, options: Options) {
+	data := save_to_memory(image, options);
 	defer delete(data);
 	// @FIXME: error handling
 	os.write_entire_file(file, data);
 }
-
 load_from_memory :: proc(data: []byte) -> Image {
 	// @HACK: handle channels better plz
 	CHANNELS :: len(Pixel);
@@ -100,8 +96,20 @@ load_from_memory :: proc(data: []byte) -> Image {
 
 	return image;
 }
+save_to_memory :: proc(image: ^Image, options: Options) -> (data: []byte) {
+	switch o in options {
+		case PPM_Options:
+			data = save_to_memory_ppm(image, o);
+	}
+	return data;
+}
 
-save_to_memory :: proc(using image: ^Image, options: PPM_Options) -> []byte {
+
+
+PPM_Options :: struct {
+	depth: u16,
+}
+save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte {
 	// @XXX: can this function be optimised?
 
 	// @HACK: handle channels better plz
@@ -148,11 +156,6 @@ save_to_memory :: proc(using image: ^Image, options: PPM_Options) -> []byte {
 
 	return data;
 }
-
-PPM_Options :: struct {
-	depth: u16,
-}
-
 // @XXX: better way to hold header information?
 @private
 _PPM_Header :: struct {
@@ -162,7 +165,6 @@ _PPM_Header :: struct {
 	depth: u16,
 	pixel_index: u8,
 }
-
 @private
 _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
 	using header;

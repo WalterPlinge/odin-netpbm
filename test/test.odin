@@ -26,7 +26,7 @@ main :: proc() {
 	}
 
 	start = time.now();
-	img.save_to_file(&image, "P6.ppm");
+	img.save_to_file(&image, "P6.ppm", img.PPM_Options{ depth = 255 });
 	fmt.eprintln("Time (save):", time.diff(start, time.now()));
 }
 
@@ -44,7 +44,7 @@ generate :: proc() {
 		}
 	}
 
-	img.save_to_file(&image, "P6.ppm");
+	img.save_to_file(&image, "P6.ppm", img.PPM_Options{ depth = 255 });
 }
 
 /*
