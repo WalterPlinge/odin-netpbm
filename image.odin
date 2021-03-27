@@ -140,8 +140,7 @@ save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte 
 			px_in_data := len(header) + px_idx * CHANNELS * STRIDE;
 			for ch, ch_idx in px {
 				ch_in_data := px_in_data + ch_idx * STRIDE;
-				// @HACK: endian-ness is broken, cast to base type first
-				value := u16be(u16(ch * Float(options.depth)));
+				value := _PPM_2_BYTES(ch * Float(options.depth));
 				bytes := mem.ptr_to_bytes(&value);
 				for b, b_idx in bytes {
 					b_in_data := ch_in_data + b_idx;
@@ -173,20 +172,21 @@ load_from_memory_ppm :: proc(data: []byte) -> Image {
 			};
 		}
 	} else {
-		pixel_data := mem.slice_data_cast([]u16be, data[pixel_index:]);
+		pixel_data := mem.slice_data_cast([]_PPM_2_BYTES, data[pixel_index:]);
 		for i in 0 ..< width * height {
 			n := i * CHANNELS;
 			image.pixels[i] = Pixel {
-				// @HACK: endian-ness is broken, cast to base type first
-				Float(u16(pixel_data[n + 0])) / Float(depth),
-				Float(u16(pixel_data[n + 1])) / Float(depth),
-				Float(u16(pixel_data[n + 2])) / Float(depth),
+				Float(pixel_data[n + 0]) / Float(depth),
+				Float(pixel_data[n + 1]) / Float(depth),
+				Float(pixel_data[n + 2]) / Float(depth),
 			};
 		}
 	}
 
 	return image;
 }
+@private
+_PPM_2_BYTES :: u16be;
 // @XXX: better way to hold header information?
 @private
 _PPM_Header :: struct {
