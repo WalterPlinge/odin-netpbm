@@ -108,13 +108,10 @@ PPM_Options :: struct {
 save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte {
 	// @XXX: can this function be optimised?
 
-	// @HACK: handle channels better plz
-	CHANNELS  :: len(Pixel);
-
 	header := fmt.tprintf("P6 %v %v %v\n", width, height, options.depth);
 
 	// Calculate capacity
-	pixel_capacity := width * height * CHANNELS;
+	pixel_capacity := width * height * _PPM_CHANNELS;
 	if options.depth > u16(max(byte)) {
 		pixel_capacity *= 2;
 	}
@@ -128,7 +125,7 @@ save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte 
 
 	if options.depth <= u16(max(byte)) {
 		for px, px_idx in &pixels {
-			px_in_data := len(header) + px_idx * CHANNELS;
+			px_in_data := len(header) + px_idx * _PPM_CHANNELS;
 			for ch, ch_idx in px {
 				ch_in_data := px_in_data + ch_idx;
 				data[ch_in_data] = byte(ch * Float(options.depth));
@@ -137,10 +134,10 @@ save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte 
 	} else {
 		STRIDE :: 2;
 		for px, px_idx in &pixels {
-			px_in_data := len(header) + px_idx * CHANNELS * STRIDE;
+			px_in_data := len(header) + px_idx * _PPM_CHANNELS * STRIDE;
 			for ch, ch_idx in px {
 				ch_in_data := px_in_data + ch_idx * STRIDE;
-				value := _PPM_2_BYTES(ch * Float(options.depth));
+				value := _PPM_Wide_Type(ch * Float(options.depth));
 				bytes := mem.ptr_to_bytes(&value);
 				for b, b_idx in bytes {
 					b_in_data := ch_in_data + b_idx;
@@ -153,9 +150,6 @@ save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte 
 	return data;
 }
 load_from_memory_ppm :: proc(data: []byte) -> Image {
-	// @HACK: handle channels better plz
-	CHANNELS :: len(Pixel);
-
 	header := _extract_ppm_header(data);
 	using header;
 
@@ -164,7 +158,7 @@ load_from_memory_ppm :: proc(data: []byte) -> Image {
 	if depth <= u16(max(byte)) {
 		pixel_data := data[pixel_index:];
 		for i in 0 ..< width * height {
-			n := i * CHANNELS;
+			n := i * _PPM_CHANNELS;
 			image.pixels[i] = Pixel {
 				Float(pixel_data[n + 0]) / Float(depth),
 				Float(pixel_data[n + 1]) / Float(depth),
@@ -172,9 +166,9 @@ load_from_memory_ppm :: proc(data: []byte) -> Image {
 			};
 		}
 	} else {
-		pixel_data := mem.slice_data_cast([]_PPM_2_BYTES, data[pixel_index:]);
+		pixel_data := mem.slice_data_cast([]_PPM_Wide_Type, data[pixel_index:]);
 		for i in 0 ..< width * height {
-			n := i * CHANNELS;
+			n := i * _PPM_CHANNELS;
 			image.pixels[i] = Pixel {
 				Float(pixel_data[n + 0]) / Float(depth),
 				Float(pixel_data[n + 1]) / Float(depth),
@@ -186,8 +180,9 @@ load_from_memory_ppm :: proc(data: []byte) -> Image {
 	return image;
 }
 @private
-_PPM_2_BYTES :: u16be;
-// @XXX: better way to hold header information?
+_PPM_Wide_Type :: u16be;
+@private
+_PPM_CHANNELS :: 3; // RGB
 @private
 _PPM_Header :: struct {
 	type: u8,
