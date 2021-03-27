@@ -1,10 +1,12 @@
 package odin_image
 
-/* @TODO:
+/*
 	- ! ONLY SUPPORTS PPM P6 RIGHT NOW
-	- Gamma adjustment
+	@TODO: Load returns options to use for similar save
+	@TODO: Gamma adjustment
 	- PPM P3
 	- PPM P1,2,4,5
+	- Buffered reading from file (big files)
 	- BMP
 	...
 	- JPG
@@ -16,6 +18,7 @@ import "core:mem"
 import "core:strconv"
 import "core:strings"
 import "core:os"
+import "core:path"
 import "core:unicode"
 
 
@@ -47,27 +50,115 @@ pixel_at :: proc(using image: ^Image, x, y: int) -> ^Pixel {
 
 
 
+Image_Format :: enum {
+	PPM,
+}
 Options :: union {
 	PPM_Options,
 }
-load_from_file :: proc(file: string) -> Image {
+load_from_file :: proc(file: string) -> (image: Image) {
 	// @FIXME: error handling
 	data, _ := os.read_entire_file(file);
 	defer delete(data);
-	return load_from_memory(data);
+
+	file_formats := map[string]Image_Format{
+		".PPM" = .PPM,
+	};
+
+	ext := strings.to_upper(path.ext(file));
+	format, found := file_formats[ext];
+	// @HACK: error handling
+	if !found {
+		return;
+	}
+
+	return load_from_memory(data, format);
 }
 save_to_file :: proc(image: ^Image, file: string, options: Options) {
 	data := save_to_memory(image, options);
+	// @HACK: error handling
+	if data == nil {
+		return;
+	}
 	defer delete(data);
+
 	// @FIXME: error handling
 	os.write_entire_file(file, data);
 }
-load_from_memory :: proc(data: []byte) -> Image {
+load_from_memory :: proc(data: []byte, image_format: Image_Format) -> (image: Image) {
+	switch image_format {
+		case .PPM:
+			return load_from_memory_ppm(data);
+	}
+	return;
+}
+save_to_memory :: proc(image: ^Image, options: Options) -> []byte {
+	switch o in options {
+		case PPM_Options:
+			return save_to_memory_ppm(image, o);
+	}
+	return nil;
+}
+
+
+
+PPM_Options :: struct {
+	depth: u16,
+}
+save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte {
+	// @XXX: can this function be optimised?
+
+	// @HACK: handle channels better plz
+	CHANNELS  :: len(Pixel);
+
+	header := fmt.tprintf("P6 %v %v %v\n", width, height, options.depth);
+
+	// Calculate capacity
+	pixel_capacity := width * height * CHANNELS;
+	if options.depth > u16(max(byte)) {
+		pixel_capacity *= 2;
+	}
+	capacity := len(header) + pixel_capacity;
+
+	// Create byte buffer
+	data := make([]byte, capacity);
+	for i in 0 ..< len(header) {
+		data[i] = header[i];
+	}
+
+	if options.depth <= u16(max(byte)) {
+		for px, px_idx in &pixels {
+			px_in_data := len(header) + px_idx * CHANNELS;
+			for ch, ch_idx in px {
+				ch_in_data := px_in_data + ch_idx;
+				data[ch_in_data] = byte(ch * Float(options.depth));
+			}
+		}
+	} else {
+		STRIDE :: 2;
+		for px, px_idx in &pixels {
+			px_in_data := len(header) + px_idx * CHANNELS * STRIDE;
+			for ch, ch_idx in px {
+				ch_in_data := px_in_data + ch_idx * STRIDE;
+				// @HACK: endian-ness is broken, cast to base type first
+				value := u16be(u16(ch * Float(options.depth)));
+				bytes := mem.ptr_to_bytes(&value);
+				for b, b_idx in bytes {
+					b_in_data := ch_in_data + b_idx;
+					data[b_in_data] = b;
+				}
+			}
+		}
+	}
+
+	return data;
+}
+load_from_memory_ppm :: proc(data: []byte) -> Image {
 	// @HACK: handle channels better plz
 	CHANNELS :: len(Pixel);
 
-	ppm := _extract_ppm_header(data);
-	using ppm;
+	header := _extract_ppm_header(data);
+	using header;
 
 	image := create(width, height);
 
@@ -96,66 +187,6 @@ load_from_memory :: proc(data: []byte) -> Image {
 
 	return image;
 }
-save_to_memory :: proc(image: ^Image, options: Options) -> (data: []byte) {
-	switch o in options {
-		case PPM_Options:
-			data = save_to_memory_ppm(image, o);
-	}
-	return data;
-}
-
-
-
-PPM_Options :: struct {
-	depth: u16,
-}
-save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte {
-	// @XXX: can this function be optimised?
-
-	// @HACK: handle channels better plz
-	CHANNELS  :: len(Pixel);
-
-	header := fmt.tprintf("P6 %v %v %v\n", width, height, options.depth);
-
-	pixel_capacity := width * height * CHANNELS;
-	if options.depth > u16(max(byte)) {
-		pixel_capacity *= 2;
-	}
-
-	capacity := len(header) + pixel_capacity;
-
-	data := make([]byte, capacity);
-	for i in 0 ..< len(header) {
-		data[i] = header[i];
-	}
-
-	if options.depth <= u16(max(byte)) {
-		for px, px_idx in &pixels {
-			px_in_data := len(header) + px_idx * CHANNELS;
-			for ch, ch_idx in px {
-				ch_in_data := px_in_data + ch_idx;
-				data[ch_in_data] = byte(ch * Float(options.depth));
-			}
-		}
-	} else {
-		// @XXX: irfanview expects big-endian, is this always the case?
-		for px, px_idx in &pixels {
-			px_in_data := len(header) + px_idx * CHANNELS * 2;
-			for ch, ch_idx in px {
-				ch_in_data := px_in_data + ch_idx * 2;
-				// @HACK: endian-ness is broken, cast to base type first
-				value := u16be(u16(ch * Float(options.depth)));
-				bytes := mem.ptr_to_bytes(&value);
-				for b, b_idx in bytes {
-					b_in_data := ch_in_data + b_idx;
-					data[b_in_data] = b;
-				}
-			}
-		}
-	}
-
-	return data;
-}
 // @XXX: better way to hold header information?
 @private
 _PPM_Header :: struct {
@@ -167,8 +198,6 @@ _PPM_Header :: struct {
 }
 @private
 _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
-	using header;
-
 	Header_Fields :: enum int {
 		Type,
 		Width,
@@ -199,16 +228,16 @@ _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
 			#partial switch Header_Fields(index) {
 				case .Type:
 					value, _ := strconv.parse_int(field[1:]);
-					type = u8(value);
+					header.type = u8(value);
 				case .Width:
 					value, _ := strconv.parse_int(field);
-					width = value;
+					header.width = value;
 				case .Height:
 					value, _ := strconv.parse_int(field);
-					height = value;
+					header.height = value;
 				case .Depth:
 					value, _ := strconv.parse_int(field);
-					depth = u16(value);
+					header.depth = u16(value);
 			}
 
 			index += 1;
@@ -222,7 +251,7 @@ _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
 
 		// break when you reach the data, which follows after single whitespace
 		if index >= int(Header_Fields.Count) {
-			pixel_index = u8(i + 1);
+			header.pixel_index = u8(i + 1);
 			break;
 		}
 	}
