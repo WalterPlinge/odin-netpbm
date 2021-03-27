@@ -3,7 +3,7 @@ package odin_image
 /*
 	- ! ONLY SUPPORTS PPM P6 RIGHT NOW
 	@TODO: Load returns options to use for similar save
-	@TODO: Gamma adjustment
+	@XXX: Gamma correction, is it necessary?
 	- PPM P3
 	- PPM P1,2,4,5
 	- Buffered reading from file (big files)
@@ -14,6 +14,7 @@ package odin_image
 */
 
 import "core:fmt"
+import "core:math"
 import "core:mem"
 import "core:strconv"
 import "core:strings"
@@ -128,16 +129,18 @@ save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte 
 			px_in_data := len(header) + px_idx * _PPM_CHANNELS;
 			for ch, ch_idx in px {
 				ch_in_data := px_in_data + ch_idx;
-				data[ch_in_data] = byte(ch * Float(options.depth));
+				value := math.saturate(ch) * Float(options.depth);
+				data[ch_in_data] = byte(value);
 			}
 		}
 	} else {
-		STRIDE :: 2;
+		STRIDE :: size_of(_PPM_Wide_Type);
+
 		for px, px_idx in &pixels {
 			px_in_data := len(header) + px_idx * _PPM_CHANNELS * STRIDE;
 			for ch, ch_idx in px {
 				ch_in_data := px_in_data + ch_idx * STRIDE;
-				value := _PPM_Wide_Type(ch * Float(options.depth));
+				value := _PPM_Wide_Type(math.saturate(ch) * Float(options.depth));
 				bytes := mem.ptr_to_bytes(&value);
 				for b, b_idx in bytes {
 					b_in_data := ch_in_data + b_idx;
@@ -159,21 +162,23 @@ load_from_memory_ppm :: proc(data: []byte) -> Image {
 		pixel_data := data[pixel_index:];
 		for i in 0 ..< width * height {
 			n := i * _PPM_CHANNELS;
-			image.pixels[i] = Pixel {
+			p := Pixel {
 				Float(pixel_data[n + 0]) / Float(depth),
 				Float(pixel_data[n + 1]) / Float(depth),
 				Float(pixel_data[n + 2]) / Float(depth),
 			};
+			image.pixels[i] = p;
 		}
 	} else {
 		pixel_data := mem.slice_data_cast([]_PPM_Wide_Type, data[pixel_index:]);
 		for i in 0 ..< width * height {
 			n := i * _PPM_CHANNELS;
-			image.pixels[i] = Pixel {
+			p := Pixel {
 				Float(pixel_data[n + 0]) / Float(depth),
 				Float(pixel_data[n + 1]) / Float(depth),
 				Float(pixel_data[n + 2]) / Float(depth),
 			};
+			image.pixels[i] = p;
 		}
 	}
 
