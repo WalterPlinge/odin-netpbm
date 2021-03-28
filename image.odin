@@ -1,11 +1,10 @@
 package odin_image
 
 /*
-	- ! ONLY SUPPORTS PPM P6 RIGHT NOW
+	- ! ONLY SUPPORTS PNM P6 RIGHT NOW
 	@TODO: Load returns options to use for similar save
 	@XXX: Gamma correction, is it necessary?
-	- PPM P3
-	- PPM P1,2,4,5
+	- PNM 3, 5, 2, 4, 1, 7, (F, f)
 	- Buffered reading from file (big files)
 	- BMP
 	...
@@ -104,12 +103,14 @@ save_to_memory :: proc(image: ^Image, options: Options) -> []byte {
 
 
 PPM_Options :: struct {
+	type: u8,
 	depth: u16,
 }
 save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte {
+	// @FIXME: error checking (PNM type, pnm maxval)
 	// @XXX: can this function be optimised?
 
-	header := fmt.tprintf("P6 %v %v %v\n", width, height, options.depth);
+	header := fmt.tprintf("P%v %v %v %v\n", options.type, width, height, options.depth);
 
 	// Calculate capacity
 	pixel_capacity := width * height * _PPM_CHANNELS;
@@ -118,6 +119,7 @@ save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte 
 	}
 	capacity := len(header) + pixel_capacity;
 
+	// @HACK: handle failed allocation
 	// Create byte buffer
 	data := make([]byte, capacity);
 	for i in 0 ..< len(header) {
@@ -182,7 +184,7 @@ load_from_memory_ppm :: proc(data: []byte) -> (Image, PPM_Options) {
 		}
 	}
 
-	return image, PPM_Options{ depth };
+	return image, PPM_Options{ type, depth };
 }
 @private
 _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
