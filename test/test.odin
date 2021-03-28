@@ -42,7 +42,7 @@ generate :: proc() {
 		}
 	}
 
-	img.save_to_file(&image, "P6.ppm", img.PPM_Options{ depth = DEPTH });
+	img.save_to_file(&image, "P6.ppm", img.PPM_Options{ maxval = DEPTH });
 }
 
 /*
