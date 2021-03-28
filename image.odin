@@ -106,17 +106,21 @@ save_to_memory :: proc(image: ^Image, options: Options) -> []byte {
 
 PPM_Options :: struct {
 	type: u8,
-	depth: u16,
+	maxval: u16,
 }
-save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte {
-	// @FIXME: error checking (PNM type, pnm maxval)
+save_to_memory_ppm :: proc(image: ^Image, options: PPM_Options) -> []byte {
 	// @XXX: can this function be optimised?
 
-	header := fmt.tprintf("P%v %v %v %v\n", options.type, width, height, options.depth);
+	// @XXX: only supports P6
+	if options.type != 6 {
+		return nil;
+	}
+
+	header := fmt.tprintf("P%v %v %v %v\n", options.type, image.width, image.height, options.maxval);
 
 	// Calculate capacity
-	pixel_capacity := width * height * _PPM_CHANNELS;
-	if options.depth > u16(max(byte)) {
+	pixel_capacity := image.width * image.height * _PPM_CHANNELS;
+	if options.maxval > u16(max(byte)) {
 		pixel_capacity *= 2;
 	}
 	capacity := len(header) + pixel_capacity;
@@ -128,23 +132,23 @@ save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte 
 		data[i] = header[i];
 	}
 
-	if options.depth <= u16(max(byte)) {
-		for px, px_idx in &pixels {
+	if options.maxval <= u16(max(byte)) {
+		for px, px_idx in &image.pixels {
 			px_in_data := len(header) + px_idx * _PPM_CHANNELS;
 			for ch, ch_idx in px {
 				ch_in_data := px_in_data + ch_idx;
-				value := math.saturate(ch) * Float(options.depth);
+				value := math.saturate(ch) * Float(options.maxval);
 				data[ch_in_data] = byte(value);
 			}
 		}
 	} else {
 		STRIDE :: size_of(_PPM_Wide_Type);
 
-		for px, px_idx in &pixels {
+		for px, px_idx in &image.pixels {
 			px_in_data := len(header) + px_idx * _PPM_CHANNELS * STRIDE;
 			for ch, ch_idx in px {
 				ch_in_data := px_in_data + ch_idx * STRIDE;
-				value := _PPM_Wide_Type(math.saturate(ch) * Float(options.depth));
+				value := _PPM_Wide_Type(math.saturate(ch) * Float(options.maxval));
 				bytes := mem.ptr_to_bytes(&value);
 				for b, b_idx in bytes {
 					b_in_data := ch_in_data + b_idx;
@@ -156,37 +160,42 @@ save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte 
 
 	return data;
 }
-load_from_memory_ppm :: proc(data: []byte) -> (Image, PPM_Options) {
+load_from_memory_ppm :: proc(data: []byte) -> (image: Image, options: PPM_Options) {
 	header := _extract_ppm_header(data);
-	using header;
 
-	image := create(width, height);
+	// @XXX: only supports P6
+	if header.type != 6 {
+		return;
+	}
 
-	if depth <= u16(max(byte)) {
-		pixel_data := data[pixel_index:];
-		for i in 0 ..< width * height {
+	options = PPM_Options{ header.type, header.maxval };
+	image = create(header.width, header.height);
+
+	if header.maxval <= u16(max(byte)) {
+		pixel_data := data[header.pixel_index:];
+		for i in 0 ..< image.width * image.height {
 			n := i * _PPM_CHANNELS;
 			p := Pixel {
-				Float(pixel_data[n + 0]) / Float(depth),
-				Float(pixel_data[n + 1]) / Float(depth),
-				Float(pixel_data[n + 2]) / Float(depth),
+				Float(pixel_data[n + 0]) / Float(header.maxval),
+				Float(pixel_data[n + 1]) / Float(header.maxval),
+				Float(pixel_data[n + 2]) / Float(header.maxval),
 			};
 			image.pixels[i] = p;
 		}
 	} else {
-		pixel_data := mem.slice_data_cast([]_PPM_Wide_Type, data[pixel_index:]);
-		for i in 0 ..< width * height {
+		pixel_data := mem.slice_data_cast([]_PPM_Wide_Type, data[header.pixel_index:]);
+		for i in 0 ..< image.width * image.height {
 			n := i * _PPM_CHANNELS;
 			p := Pixel {
-				Float(pixel_data[n + 0]) / Float(depth),
-				Float(pixel_data[n + 1]) / Float(depth),
-				Float(pixel_data[n + 2]) / Float(depth),
+				Float(pixel_data[n + 0]) / Float(header.maxval),
+				Float(pixel_data[n + 1]) / Float(header.maxval),
+				Float(pixel_data[n + 2]) / Float(header.maxval),
 			};
 			image.pixels[i] = p;
 		}
 	}
 
-	return image, PPM_Options{ type, depth };
+	return image, PPM_Options{ header.type, header.maxval };
 }
 @private
 _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
@@ -221,6 +230,8 @@ _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
 				case .Type:
 					value, _ := strconv.parse_int(field[1:]);
 					header.type = u8(value);
+					// @XXX: only supports P6
+					assert(header.type == 6, "only supports P6");
 				case .Width:
 					value, _ := strconv.parse_int(field);
 					header.width = value;
@@ -229,7 +240,7 @@ _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
 					header.height = value;
 				case .Depth:
 					value, _ := strconv.parse_int(field);
-					header.depth = u16(value);
+					header.maxval = u16(value);
 			}
 
 			index += 1;
@@ -259,6 +270,6 @@ _PPM_Header :: struct {
 	type: u8,
 	width: int,
 	height: int,
-	depth: u16,
+	maxval: u16,
 	pixel_index: u8,
 }
