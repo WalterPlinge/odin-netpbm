@@ -57,7 +57,7 @@ Image_Format :: enum {
 Options :: union {
 	PPM_Options,
 }
-load_from_file :: proc(file: string) -> (image: Image) {
+load_from_file :: proc(file: string) -> (image: Image, options: Options) {
 	// @FIXME: error handling
 	data, _ := os.read_entire_file(file);
 	defer delete(data);
@@ -86,7 +86,7 @@ save_to_file :: proc(image: ^Image, file: string, options: Options) {
 	// @FIXME: error handling
 	os.write_entire_file(file, data);
 }
-load_from_memory :: proc(data: []byte, image_format: Image_Format) -> (image: Image) {
+load_from_memory :: proc(data: []byte, image_format: Image_Format) -> (image: Image, options: Options) {
 	switch image_format {
 		case .PPM:
 			return load_from_memory_ppm(data);
@@ -152,7 +152,7 @@ save_to_memory_ppm :: proc(using image: ^Image, options: PPM_Options) -> []byte 
 
 	return data;
 }
-load_from_memory_ppm :: proc(data: []byte) -> Image {
+load_from_memory_ppm :: proc(data: []byte) -> (Image, PPM_Options) {
 	header := _extract_ppm_header(data);
 	using header;
 
@@ -182,19 +182,7 @@ load_from_memory_ppm :: proc(data: []byte) -> Image {
 		}
 	}
 
-	return image;
-}
-@private
-_PPM_Wide_Type :: u16be;
-@private
-_PPM_CHANNELS :: 3; // RGB
-@private
-_PPM_Header :: struct {
-	type: u8,
-	width: int,
-	height: int,
-	depth: u16,
-	pixel_index: u8,
+	return image, PPM_Options{ depth };
 }
 @private
 _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
@@ -257,4 +245,16 @@ _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
 	}
 
 	return header;
+}
+@private
+_PPM_Wide_Type :: u16be;
+@private
+_PPM_CHANNELS :: 3; // RGB
+@private
+_PPM_Header :: struct {
+	type: u8,
+	width: int,
+	height: int,
+	depth: u16,
+	pixel_index: u8,
 }
