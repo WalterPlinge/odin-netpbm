@@ -4,7 +4,9 @@ package odin_image
 	- ! ONLY SUPPORTS PNM P6 RIGHT NOW
 	@TODO: Load returns options to use for similar save
 	@XXX: Gamma correction, is it necessary?
-	- PNM 3, 5, 2, 4, 1, 7, (F, f)
+	- PNM 3, 5, 2, 4, 1
+	- PAM P7
+	- PFM PF, Pf
 	- Buffered reading from file (big files)
 	- BMP
 	...
