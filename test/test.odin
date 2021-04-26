@@ -1,7 +1,7 @@
 package test
 
-import "core:fmt"
-import "core:time"
+// import "core:fmt"
+// import "core:time"
 
 import img ".."
 
@@ -11,25 +11,26 @@ main :: proc() {
 		return;
 	}
 
-	start : time.Time;
-	start = time.now();
 	image, options := img.load_from_file("P6.ppm");
-	fmt.eprintln("Time (load):", time.diff(start, time.now()));
 	defer img.delete_image(&image);
 
+	edit_image(&image);
+
+	img.save_to_file(&image, "P6.ppm", options);
+}
+
+edit_image :: proc (
+	image : ^img.Image,
+) {
 	for p in &image.pixels {
 		p.r, p.g, p.b = p.b, p.r, p.g;
 	}
-
-	start = time.now();
-	img.save_to_file(&image, "P6.ppm", options);
-	fmt.eprintln("Time (save):", time.diff(start, time.now()));
 }
 
 generate :: proc() {
 	HEIGHT :: 5;
 	WIDTH  :: HEIGHT * 2;
-	DEPTH  :: 65535;
+	DEPTH  :: 0xFF;//FF;
 	image := img.create(WIDTH, HEIGHT);
 	defer img.delete_image(&image);
 	using image;
@@ -42,7 +43,7 @@ generate :: proc() {
 		}
 	}
 
-	img.save_to_file(&image, "P6.ppm", img.PPM_Options{ maxval = DEPTH });
+	img.save_to_file(&image, "P6.ppm", img.PPM_Options{ type = 6, maxval = DEPTH });
 }
 
 /*
