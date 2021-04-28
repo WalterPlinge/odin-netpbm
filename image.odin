@@ -1,17 +1,19 @@
 package odin_image
 
 /*
-	- ! ONLY SUPPORTS PNM P6 RIGHT NOW
-	@TODO: Load returns options to use for similar save
+	[x] saving
+	[x] loading
+	[x] 1 & 2 byte values
+	[x] comments
+	@TODO [ ] allocators
+	@TODO [ ] errors
+	@TODO [ ] P3
+	@TODO [ ] P5 / P2 / P4 / P1
+	@TODO [ ] Streams (memory / file / stream)
+	@TODO [ ] P7 (PAM)
+	@TODO [ ] PF / Pf (PFM)
+	@XXX [ ] Other formats (BMP / JPG / PNG)
 	@XXX: Gamma correction, is it necessary?
-	- PNM 3, 5, 2, 4, 1
-	- PAM P7
-	- PFM PF, Pf
-	- Buffered reading from file (big files)
-	- BMP
-	...
-	- JPG
-	- PNG
 */
 
 import "core:fmt"
@@ -125,7 +127,7 @@ save_to_memory_ppm :: proc(image: ^Image, options: PPM_Options) -> []byte {
 	}
 	capacity := len(header) + pixel_capacity;
 
-	// @HACK: handle failed allocation
+	// @HACK: handle failed allocation?
 	// Create byte buffer
 	data := make([]byte, capacity);
 	for i in 0 ..< len(header) {
@@ -199,67 +201,85 @@ load_from_memory_ppm :: proc(data: []byte) -> (image: Image, options: PPM_Option
 }
 @private
 _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
-	Header_Fields :: enum int {
+	// @HACK: Add error support instead of asserting
+	assert(data[0] == 'P', "Invalid PPM header (not a 'P' number)");
+	assert(unicode.is_digit(rune(data[1])), "Invalid PPM header (bad number)");
+	magic_num, _ := strconv.parse_int(string([]byte{data[1]}));
+	assert(magic_num >= 1 && magic_num <= 6, "Invalid PPM header (invalid number)");
+
+	header.type = u8(magic_num);
+
+	// start pixel_index on 2 so we can skip magic number
+	header.pixel_index = 2;
+
+	// fields
+	Fields :: enum {
 		Type,
 		Width,
 		Height,
-		Depth,
+		Maxval,
 		Count,
 	};
+	width, height, maxval := 0, 0, 0;
 
-	// current header field being scanned, and range of field text
-	index := 0;
-	start, end := 0, 0;
+	in_comment := false;
 	already_in_space := true;
+	current_field := int(Fields.Width);
+	current_value := &width;
 
-	for d, i in data {
-		is_space := unicode.is_space(rune(d));
+	loop:
+	for d, i in data[2:] {
+		// current value being parsed
 
-		// do nothing if we havn't changed from field to space or vice versa
-		if is_space == already_in_space {
+		// handle comments
+		if in_comment {
+			switch d {
+				case '\r', '\n':
+					in_comment = false;
+			}
+			continue;
+		} else if d == '#' {
+			in_comment = true;
 			continue;
 		}
 
-		// now in space, set header field to current range
-		if is_space {
-			end = i;
-
-			field := string(data[start : end]);
-			// @FIXME: error handling
-			#partial switch Header_Fields(index) {
-				case .Type:
-					value, _ := strconv.parse_int(field[1:]);
-					header.type = u8(value);
-					// @XXX: only supports P6
-					assert(header.type == 6, "only supports P6");
-				case .Width:
-					value, _ := strconv.parse_int(field);
-					header.width = value;
-				case .Height:
-					value, _ := strconv.parse_int(field);
-					header.height = value;
-				case .Depth:
-					value, _ := strconv.parse_int(field);
-					header.maxval = u16(value);
+		// handle whitespace
+		in_space := unicode.is_white_space(rune(d));
+		if in_space {
+			// still in space
+			if already_in_space {
+				continue;
 			}
-
-			index += 1;
 			already_in_space = true;
-		}
-		// no longer in space, reset start of range
-		else {
-			start = i;
-			already_in_space = false;
-		}
 
-		// break when you reach the data, which follows after single whitespace
-		if index >= int(Header_Fields.Count) {
-			header.pixel_index = u8(i + 1);
-			break;
+			// switch to next value
+			current_field += 1;
+			switch Fields(current_field) {
+				case .Height:
+					current_value = &height;
+				case .Maxval:
+					current_value = &maxval;
+				case .Type, .Width, .Count:
+					// payload starts on next byte (already has 2 for magic number)
+					header.pixel_index += i + 1;
+					break loop;
+			}
+		} else {
+			already_in_space = false;
+
+			assert(unicode.is_digit(rune(d)), "Invalid PPM header (malformed token)");
+			str := []byte{ d };
+			val, _ := strconv.parse_int(string(str));
+			current_value^ *= 10;
+			current_value^ += val;
 		}
 	}
 
-	return header;
+	header.width = width;
+	header.height = height;
+	header.maxval = u16(maxval);
+
+	return;
 }
 @private
 _PPM_Wide_Type :: u16be;
@@ -271,5 +291,5 @@ _PPM_Header :: struct {
 	width: int,
 	height: int,
 	maxval: u16,
-	pixel_index: u8,
+	pixel_index: int,
 }
