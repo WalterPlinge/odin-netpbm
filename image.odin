@@ -27,20 +27,25 @@ import "core:unicode"
 
 
 
-Float :: f64;
-Pixel :: distinct [3]Float;
+Float :: f32;
+Pixel :: distinct [3]Float; // RGB
 Image :: struct {
 	width: int,
 	height: int,
-	pixels: []Pixel,
-}
-init :: proc(using image: ^Image) {
-	pixels = make([]Pixel, width * height);
+	pixels: [dynamic]Pixel,
 }
 create :: proc(width, height: int) -> Image {
 	image := Image{ width, height, nil };
 	init(&image);
 	return image;
+}
+init :: proc(using image: ^Image) {
+	pixels = make([dynamic]Pixel, width * height);
+}
+resize :: proc(image: ^Image, width, height: int) {
+	image.width = width;
+	image.height = height;
+	resize_dynamic_array(&image.pixels, width * height);
 }
 delete_image :: proc(using image: ^Image) {
 	delete(pixels);
