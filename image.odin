@@ -204,6 +204,13 @@ load_from_memory_ppm :: proc(data: []byte) -> (image: Image, options: PPM_Option
 
 	return image, PPM_Options{ header.type, header.maxval };
 }
+check_format_ppm :: proc(data: []byte) -> Image_Format {
+	magic := string(data[0:2]);
+	switch magic {
+		case "P6":
+			return Image_Format.PPM;
+	}
+}
 @private
 _extract_ppm_header :: proc(data: []byte) -> (header: _PPM_Header) {
 	// @HACK: Add error support instead of asserting
