@@ -11,7 +11,7 @@ main :: proc() {
 		return;
 	}
 
-	image, options := img.load_from_file("P6.ppm");
+	image, options, _ := img.load_from_file("P6.ppm", .PPM);
 	defer img.delete_image(&image);
 
 	edit_image(&image);
@@ -43,7 +43,11 @@ generate :: proc() {
 		}
 	}
 
-	img.save_to_file(&image, "P6.ppm", img.PPM_Options{ type = 6, maxval = DEPTH });
+	options := img.PPM_Options{
+		ascii = false,
+		maxval = DEPTH,
+	};
+	img.save_to_file(&image, "P6.ppm", options);
 }
 
 /*
