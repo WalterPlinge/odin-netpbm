@@ -2,7 +2,7 @@
 
 set APP="test.exe"
 
-call odin build . -out:%APP% -llvm-api -debug -show-timings
+call odin build . -out:%APP% -show-timings -debug -vet
 
 if exist %APP% (
 	if "%1" == "-run" call %APP%
