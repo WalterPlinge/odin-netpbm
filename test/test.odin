@@ -1,53 +1,115 @@
 package test
 
-// import "core:fmt"
+import "core:bytes"
+import "core:fmt"
+import "core:image"
+import "core:mem"
+import "core:os"
 // import "core:time"
 
-import img ".."
+import "../ppm"
+
+FILE_NAME :: "p6.ppm"
 
 main :: proc() {
-	if false {
-		generate();
-		return;
+	if len(os.args) == 2 && os.args[1] == "gen" {
+		img := generate()
+		defer bytes.buffer_destroy(&img.pixels)
+		data, err := ppm.save(&img)
+		if err != .None {
+			fmt.println(err)
+			return
+		}
+		if !os.write_entire_file(FILE_NAME, data) {
+			fmt.println("error writing entire file")
+			return
+		}
+		return
 	}
 
-	image, options, _ := img.load_from_file("P6.ppm", .PPM);
-	defer img.delete_image(&image);
+	fmt.println("read file")
 
-	edit_image(&image);
+	file, ok := os.read_entire_file(FILE_NAME)
+	if !ok {
+		fmt.println("error reading entire file")
+		return
+	}
 
-	img.save_to_file(&image, "P6.ppm", options);
+	fmt.println("load file")
+
+	img, err := ppm.load(file)
+	defer free(img)
+	defer bytes.buffer_destroy(&img.pixels)
+	if err != .None {
+		fmt.println(err)
+		return
+	}
+
+	fmt.println("edit image")
+
+	edit_image(img)
+
+	fmt.println("save image")
+
+	data: []byte
+	data, err = ppm.save(img)
+	if err != .None {
+		fmt.println(err)
+		return
+	}
+
+	fmt.println("write file")
+
+	if !os.write_entire_file(FILE_NAME, data) {
+		fmt.println("error writing entire file 2")
+		return
+	}
+
+	fmt.println("end")
+
+	return
 }
 
+TYPE   :: u16
+
 edit_image :: proc (
-	image : ^img.Image,
+	img: ^image.Image,
 ) {
-	for p in &image.pixels {
+	pixel_data := mem.slice_data_cast([][3]TYPE, img.pixels.buf[:])
+	for p in &pixel_data {
 		p.r, p.g, p.b = p.b, p.r, p.g;
 	}
 }
 
-generate :: proc() {
-	HEIGHT :: 5;
-	WIDTH  :: HEIGHT * 2;
-	DEPTH  :: 0xFF;//FF;
-	image := img.create(WIDTH, HEIGHT);
-	defer img.delete_image(&image);
-	using image;
+generate :: proc() -> image.Image {
+	BITS_PER_BYTE :: 8
+	HEIGHT :: 5
+	WIDTH  :: HEIGHT * 2
+	DEPTH  :: size_of(TYPE) * BITS_PER_BYTE
 
-	for y in 0 ..< height {
-		for x in 0 ..< width {
-			p := img.pixel_at(&image, x, y);
-			p.r = img.Float(x) / img.Float(width);
-			p.g = img.Float(y) / img.Float(height);
+	img := image.Image{
+		width = WIDTH,
+		height = HEIGHT,
+		channels = 3,
+		depth = DEPTH,
+	}
+
+	resize(&img.pixels.buf, img.width * img.height * img.channels * (DEPTH / BITS_PER_BYTE))
+
+	pixel_data := mem.slice_data_cast([][3]TYPE, img.pixels.buf[:])
+	pixel_index :: proc(img: ^image.Image, x, y: int) -> int {
+		return y * img.width + x
+	}
+
+	for y in 0 ..< img.height {
+		for x in 0 ..< img.width {
+			p := &pixel_data[pixel_index(&img, x, y)]
+			p.r = TYPE(f32(max(TYPE)) * f32(x) / f32(img.width))
+			p.g = TYPE(f32(max(TYPE)) * f32(y) / f32(img.height))
 		}
 	}
 
-	options := img.PPM_Options{
-		ascii = false,
-		maxval = DEPTH,
-	};
-	img.save_to_file(&image, "P6.ppm", options);
+	return img
 }
 
 /*
