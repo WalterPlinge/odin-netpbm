@@ -15,29 +15,11 @@ main :: proc() {
 	if len(os.args) == 2 && os.args[1] == "gen" {
 		img := generate()
 		defer bytes.buffer_destroy(&img.pixels)
-		data, err := ppm.save(&img)
-		if err != .None {
-			fmt.println(err)
-			return
-		}
-		if !os.write_entire_file(FILE_NAME, data) {
-			fmt.println("error writing entire file")
-			return
-		}
+		err := ppm.save_to_file(FILE_NAME, &img)
 		return
 	}
 
-	fmt.println("read file")
-
-	file, ok := os.read_entire_file(FILE_NAME)
-	if !ok {
-		fmt.println("error reading entire file")
-		return
-	}
-
-	fmt.println("load file")
-
-	img, err := ppm.load(file)
+	img, err := ppm.load_from_file(FILE_NAME)
 	defer free(img)
 	defer bytes.buffer_destroy(&img.pixels)
 	if err != .None {
@@ -51,19 +33,7 @@ main :: proc() {
 
 	fmt.println("save image")
 
-	data: []byte
-	data, err = ppm.save(img)
-	if err != .None {
-		fmt.println(err)
-		return
-	}
-
-	fmt.println("write file")
-
-	if !os.write_entire_file(FILE_NAME, data) {
-		fmt.println("error writing entire file 2")
-		return
-	}
+	err = ppm.save_to_file(FILE_NAME, img)
 
 	fmt.println("end")
 

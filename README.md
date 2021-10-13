@@ -1,2 +1,2 @@
-# odin-image
- Image library for Odin
+# odin-netpbm
+ NetPBM library for Odin

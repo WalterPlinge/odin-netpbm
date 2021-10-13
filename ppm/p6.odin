@@ -20,12 +20,12 @@ package image_ppm
 		[?] Gamma correction, is it necessary?
 	[-] loading
 		[x] memory
-		[ ] file
-		[?] stream
+		[x] file
+		[?] stream/context
 	[-] saving
 		[x] memory
-		[ ] file
-		[?] stream
+		[x] file
+		[?] stream/context
 	[x] use allocators
 	[-] proper errors
 	[ ] pass options
@@ -41,6 +41,7 @@ import "core:bytes"
 import "core:fmt"
 import "core:image"
 import "core:mem"
+import "core:os"
 import "core:strconv"
 import "core:unicode"
 
@@ -59,11 +60,13 @@ Image :: image.Image
 Error :: enum {
 	None = 0,
 	// loading
+	File_Not_Readable,
 	Invalid_PPM_Signature,
 	Invalid_Header_Value,
 	Invalid_Maxval,
 	Invalid_Buffer_Size,
 	// saving
+	File_Not_Writable,
 	Invalid_Image_Depth,
 	Invalid_Channel_Count,
 }
@@ -120,7 +123,6 @@ load :: proc(data: []byte, allocator := context.allocator) -> (img: ^Image, err:
 	return
 }
 
-when true {
 save :: proc(img: ^Image, allocator := context.allocator) -> (data: []byte, err: Error) {
 	context.allocator = allocator
 
@@ -160,8 +162,38 @@ save :: proc(img: ^Image, allocator := context.allocator) -> (data: []byte, err:
 
 	return
 }
+
+
+
+load_from_file :: proc(filename: string, allocator := context.allocator) -> (img: ^Image, err: Error) {
+	context.allocator = allocator
+
+	data, ok := os.read_entire_file(filename)
+	defer delete(data)
+
+	if !ok {
+		img = new(Image)
+		return img, .File_Not_Readable
+	}
+
+	return load(data)
 }
 
+save_to_file :: proc(filename: string, img: ^Image, allocator := context.allocator) -> (err: Error) {
+	context.allocator = allocator
+
+	data, error := save(img)
+	defer delete(data)
+	if error != .None {
+		return error
+	}
+
+	if !os.write_entire_file(filename, data) {
+		return .File_Not_Writable
+	}
+
+	return
+}
 
 
 
