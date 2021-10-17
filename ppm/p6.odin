@@ -63,6 +63,7 @@ Error :: enum {
 	File_Not_Readable,
 	Invalid_PPM_Signature,
 	Invalid_Header_Value,
+	Invalid_Header,
 	Invalid_Maxval,
 	Invalid_Buffer_Size,
 	// saving
@@ -258,11 +259,15 @@ read_header :: proc(data: []byte) -> (header: Header, err: Error) {
 		}
 	}
 
+	if current_field < len(header_fields) {
+		return header, .Invalid_Header
+	}
+
 	if maxval == 0 || maxval > int(max(u16)) {
 		return header, .Invalid_Maxval
 	}
 
-	header.width = width
+	header.width  = width
 	header.height = height
 	header.maxval = maxval
 
