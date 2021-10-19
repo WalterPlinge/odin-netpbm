@@ -15,13 +15,12 @@ main :: proc() {
 	if len(os.args) == 2 && os.args[1] == "gen" {
 		img := generate()
 		defer bytes.buffer_destroy(&img.pixels)
-		err := ppm.save_to_file(FILE_NAME, &img)
+		err := ppm.write_to_file(FILE_NAME, img)
 		return
 	}
 
-	img, err := ppm.load_from_file(FILE_NAME)
-	defer free(img)
-	defer bytes.buffer_destroy(&img.pixels)
+	imgs, err := ppm.read_from_file(FILE_NAME)
+	defer ppm.destroy(imgs)
 	if err != .None {
 		fmt.println(err)
 		return
@@ -29,11 +28,11 @@ main :: proc() {
 
 	fmt.println("edit image")
 
-	edit_image(img)
+	edit_image(&imgs[0])
 
 	fmt.println("save image")
 
-	err = ppm.save_to_file(FILE_NAME, img)
+	err = ppm.write_to_file(FILE_NAME, imgs[0])
 
 	fmt.println("end")
 
