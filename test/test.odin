@@ -13,33 +13,39 @@ FILE_NAME :: "p6.ppm"
 
 main :: proc() {
 	if len(os.args) == 2 && os.args[1] == "gen" {
-		img := generate()
-		defer bytes.buffer_destroy(&img.pixels)
-		err := ppm.write_to_file(FILE_NAME, img)
-		return
+		img1, img2 := generate(), generate()
+		edit_image(&img2)
+		defer {
+			bytes.buffer_destroy(&img1.pixels)
+			bytes.buffer_destroy(&img2.pixels)
+		}
+		err := ppm.write_multiple_to_file(FILE_NAME, []ppm.Image{ img1, img2 })
+	} else {
+		for _ in 0 ..< 1 {
+			imgs, err := ppm.read_from_file(FILE_NAME)
+			defer ppm.destroy(imgs)
+			if err != .None {
+				fmt.println(err)
+				return
+			}
+
+			fmt.println("edit image")
+
+			//edit_image(&imgs[0])
+			imgs[0], imgs[1] = imgs[1], imgs[0]
+
+			fmt.println("save image")
+
+			err = ppm.write_multiple_to_file(FILE_NAME, imgs[:])
+
+			fmt.println("end")
+		}
 	}
-
-	imgs, err := ppm.read_from_file(FILE_NAME)
-	defer ppm.destroy(imgs)
-	if err != .None {
-		fmt.println(err)
-		return
-	}
-
-	fmt.println("edit image")
-
-	edit_image(&imgs[0])
-
-	fmt.println("save image")
-
-	err = ppm.write_to_file(FILE_NAME, imgs[0])
-
-	fmt.println("end")
 
 	return
 }
 
-TYPE   :: u16
+TYPE :: u8
 
 edit_image :: proc (
 	img: ^image.Image,
@@ -52,8 +58,8 @@ edit_image :: proc (
 
 generate :: proc() -> image.Image {
 	BITS_PER_BYTE :: 8
-	HEIGHT :: 5
-	WIDTH  :: HEIGHT * 2
+	WIDTH  :: 1920
+	HEIGHT :: 1080
 	DEPTH  :: size_of(TYPE) * BITS_PER_BYTE
 
 	img := image.Image{

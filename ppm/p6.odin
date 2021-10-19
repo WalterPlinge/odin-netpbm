@@ -16,7 +16,7 @@ package image_ppm
 			[x] 2 byte values
 			[ ] arbitrary maxvals (options and metadata)
 			[?] endian conversion or info flag
-		[-] multiple images
+		[x] multiple images
 		[?] Gamma correction, is it necessary?
 	[-] reading
 		[x] memory
@@ -59,17 +59,18 @@ Image :: image.Image
 
 Error :: enum {
 	None = 0,
-	// loading
+	// reading
 	File_Not_Readable,
 	Invalid_PPM_Signature,
 	Invalid_Header_Value,
 	Invalid_Header,
 	Invalid_Maxval,
 	Invalid_Buffer_Size,
-	// saving
+	// writing
 	File_Not_Writable,
 	Invalid_Image_Depth,
 	Invalid_Channel_Count,
+	Empty_List,
 }
 
 Header :: struct {
@@ -86,10 +87,10 @@ Header :: struct {
 
 
 destroy :: proc(images: [dynamic]Image) {
-	images := images
 	if images == nil {
 		return
 	}
+	images := images
 	for i in &images {
 		bytes.buffer_destroy(&i.pixels)
 	}
@@ -99,29 +100,32 @@ destroy :: proc(images: [dynamic]Image) {
 read :: proc(data: []byte, allocator := context.allocator) -> (images: [dynamic]Image, err: Error) {
 	context.allocator = allocator
 
+	// we should have at least one
 	reserve(&images, 1)
 	remaining_data := data
 
+	// while we still have data
 	for len(remaining_data) > 0 {
 		header := read_header(remaining_data) or_return
 		using header
 
+		// pixel_length is calculated, so could be more than we have if payload is corrupt
 		if len(remaining_data) < pixel_start + pixel_length {
-			return images, Error.Invalid_Buffer_Size
+			return images, .Invalid_Buffer_Size
 		}
 
-		pixel_data := remaining_data[pixel_start:][:pixel_length]
+		pixel_data    := remaining_data[pixel_start:][:pixel_length]
 		remaining_data = remaining_data[pixel_start + pixel_length:]
 
 		bytes_per_channel := maxval > int(max(u8)) \
 			? size_of(u16) \
 			: size_of(u8 )
 
-		img := Image{}
-		img.width = width
-		img.height = height
+		img         := Image{}
+		img.width    = width
+		img.height   = height
 		img.channels = CHANNELS_PER_PIXEL
-		img.depth = bytes_per_channel * BITS_PER_BYTE
+		img.depth    = bytes_per_channel * BITS_PER_BYTE
 
 		bytes.buffer_init(&img.pixels, pixel_data)
 
@@ -140,41 +144,62 @@ read :: proc(data: []byte, allocator := context.allocator) -> (images: [dynamic]
 	return images, Error.None
 }
 
-write :: proc(img: Image, allocator := context.allocator) -> (data: []byte, err: Error) {
+write :: proc(image: Image, allocator := context.allocator) -> (data: []byte, err: Error) {
 	context.allocator = allocator
 
-	if img.channels != CHANNELS_PER_PIXEL {
-		return nil, Error.Invalid_Channel_Count
+	if image.channels != CHANNELS_PER_PIXEL {
+		return nil, .Invalid_Channel_Count
 	}
 
-	if img.depth != size_of(u8 ) * BITS_PER_BYTE \
-	&& img.depth != size_of(u16) * BITS_PER_BYTE {
-		return nil, Error.Invalid_Image_Depth
+	if image.depth != size_of(u8 ) * BITS_PER_BYTE \
+	&& image.depth != size_of(u16) * BITS_PER_BYTE {
+		return nil, .Invalid_Image_Depth
 	}
 	// @TODO: max_val should come from an options struct
-	max_val := img.depth == BITS_PER_BYTE ? int(max(u8)) : int(max(u16))
+	max_val := image.depth == BITS_PER_BYTE ? int(max(u8)) : int(max(u16))
 
 	// format header string
-	header := fmt.tprintf("%s %v %v %v\n", SIGNATURE, img.width, img.height, max_val)
+	header := fmt.tprintf("%s %v %v %v\n", SIGNATURE, image.width, image.height, max_val)
 
 	// Calculate capacity
-	bytes_per_channel := img.depth / BITS_PER_BYTE
+	bytes_per_channel := image.depth / BITS_PER_BYTE
 	// @TODO: overflow protection
-	capacity := len(header) + img.width * img.height * img.channels * bytes_per_channel
+	capacity := len(header) + image.width * image.height * image.channels * bytes_per_channel
 
 	data = make([]byte, capacity)
 
 	copy(data[:], header)
-	// @TODO: make sure img.pixels is valid FORMAT and SIZE
 	pixel_data := data[len(header):]
-	copy(pixel_data[:], img.pixels.buf[:])
+	// @TODO: make sure image.pixels is valid FORMAT and SIZE
+	copy(pixel_data[:], image.pixels.buf[:])
 
+	// @TODO: do i need to care about endianness
 	// PPM 2 byte format is big endian
 	if bytes_per_channel == 2 {
 		pixels := mem.slice_data_cast([]u16be, pixel_data)
 		for p in &pixels {
 			p = u16be(transmute(u16) p)
 		}
+	}
+
+	return
+}
+
+write_multiple :: proc(images: []Image, allocator := context.allocator) -> (data: [dynamic]byte, err: Error) {
+	context.allocator = allocator
+
+	// we can't write an empty list
+	if images == nil {
+		return nil, .Empty_List
+	}
+	images := images
+
+	// just keep appending each image as written
+	// calculating the size beforehand would either be too memory intensive or too clever for now
+	data = make([dynamic]byte)
+	for img in &images {
+		d := write(img) or_return
+		append(&data, ..d)
 	}
 
 	return
@@ -195,16 +220,32 @@ read_from_file :: proc(filename: string, allocator := context.allocator) -> (ima
 	return read(data)
 }
 
-write_to_file :: proc(filename: string, img: Image, allocator := context.allocator) -> (err: Error) {
+write_to_file :: proc(filename: string, image: Image, allocator := context.allocator) -> (err: Error) {
 	context.allocator = allocator
 
-	data, error := write(img)
+	data, error := write(image)
 	defer delete(data)
 	if error != .None {
 		return error
 	}
 
 	if !os.write_entire_file(filename, data) {
+		return .File_Not_Writable
+	}
+
+	return
+}
+
+write_multiple_to_file :: proc(filename: string, images: []Image, allocator := context.allocator) -> (err: Error) {
+	context.allocator = allocator
+
+	data, error := write_multiple(images)
+	defer delete(data)
+	if error != .None {
+		return error
+	}
+
+	if !os.write_entire_file(filename, data[:]) {
 		return .File_Not_Writable
 	}
 
@@ -224,7 +265,7 @@ read_header :: proc(data: []byte) -> (header: Header, err: Error) {
 		return header, .Invalid_PPM_Signature
 	}
 
-	// fields
+	// have a list of fielda for easy iteration
 	width, height, maxval: int
 	header_fields := []^int{ &width, &height, &maxval }
 
@@ -234,7 +275,6 @@ read_header :: proc(data: []byte) -> (header: Header, err: Error) {
 	current_field := 0
 	current_value := header_fields[0]
 
-	// @FIXME: change loop to index-for, to more correctly parse the integers
 	loop:
 	for d, i in data[len(SIGNATURE):] {
 		// handle comments
