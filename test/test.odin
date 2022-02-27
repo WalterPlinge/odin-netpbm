@@ -89,6 +89,5 @@ generate :: proc() -> image.Image {
 
 /*
 Timer:
-	start := time.now();
-	defer fmt.eprintln("Time:", time.diff(start, time.now()));
+	start := time.now(); defer fmt.eprintln("Time:", time.diff(start, time.now()))
 */

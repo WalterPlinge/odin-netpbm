@@ -14,7 +14,7 @@ package image_ppm
 		[-] maxval
 			[x] 1 byte values
 			[x] 2 byte values
-			[ ] arbitrary maxvals (options and metadata)
+			[-] arbitrary maxvals (options and metadata)
 			[?] endian conversion or info flag
 		[x] multiple images
 		[?] Gamma correction, is it necessary?
@@ -28,8 +28,8 @@ package image_ppm
 		[?] stream/context
 	[x] use allocators
 	[-] proper errors
-	[ ] pass options
-	[ ] use core:image.Image.metadata
+	[-] pass options
+	[-] use core:image.Image.metadata
 	[ ] ascii version (P3)
 	[ ] PGM (P5, P2)
 	[ ] PBM (P4, P1)
@@ -47,11 +47,7 @@ import "core:unicode"
 
 
 
-
-
 SIGNATURE :: "P6"
-
-
 
 
 
@@ -68,21 +64,25 @@ Error :: enum {
 	Invalid_Buffer_Size,
 	// writing
 	File_Not_Writable,
-	Invalid_Image_Depth,
 	Invalid_Channel_Count,
+	Invalid_Image_Depth,
+	Invalid_Image_Info,
 	Empty_List,
 }
 
 Header :: struct {
-	//ascii: bool,
-	width: int,
-	height: int,
-	maxval: int,
-	pixel_start: int,
+	// ascii:        bool,
+	width:        int,
+	height:       int,
+	maxval:       int,
+	pixel_start:  int,
 	pixel_length: int,
 }
 
-
+Info :: struct {
+	maxval: int,
+	raw:    bool,
+}
 
 
 
@@ -93,6 +93,9 @@ destroy :: proc(images: [dynamic]Image) {
 	images := images
 	for i in &images {
 		bytes.buffer_destroy(&i.pixels)
+		//if m, ok := i.metadata.(^PPM_Info); ok {
+		//	free(m)
+		//}
 	}
 	delete(images)
 }
@@ -127,16 +130,11 @@ read :: proc(data: []byte, allocator := context.allocator) -> (images: [dynamic]
 		img.channels = CHANNELS_PER_PIXEL
 		img.depth    = bytes_per_channel * BITS_PER_BYTE
 
-		bytes.buffer_init(&img.pixels, pixel_data)
+		//info := new(PPM_Info)
+		//info.maxval = maxval
+		//img.metadata = info
 
-		// @TODO: do I need to care about endianness? i.e. change the pixel data from u16be to u16?
-		// PPM 2 byte format is big endian
-		if bytes_per_channel == 2 {
-			pixels := mem.slice_data_cast([]u16, img.pixels.buf[:])
-			for p in &pixels {
-				p = u16(transmute(u16be) p)
-			}
-		}
+		bytes.buffer_init(&img.pixels, pixel_data)
 
 		append(&images, img)
 	}
@@ -155,15 +153,23 @@ write :: proc(image: Image, allocator := context.allocator) -> (data: []byte, er
 	&& image.depth != size_of(u16) * BITS_PER_BYTE {
 		return nil, .Invalid_Image_Depth
 	}
-	// @TODO: max_val should come from an options struct
-	max_val := image.depth == BITS_PER_BYTE ? int(max(u8)) : int(max(u16))
+
+	// @TODO: maxval should probably come from an options struct
+	maxval := image.depth == BITS_PER_BYTE \
+		? int(max(u8 )) \
+		: int(max(u16))
+	//info, ok := image.metadata.(^PPM_Info)
+	//if !ok {
+	//	return nil, .Invalid_Image_Info
+	//}
+	//maxval := info.maxval
 
 	// format header string
-	header := fmt.tprintf("%s %v %v %v\n", SIGNATURE, image.width, image.height, max_val)
+	header := fmt.tprintf("%s\n%v %v\n%v\n", SIGNATURE, image.width, image.height, maxval)
 
 	// Calculate capacity
 	bytes_per_channel := image.depth / BITS_PER_BYTE
-	// @TODO: overflow protection
+	// @TODO: overflow protection ?
 	capacity := len(header) + image.width * image.height * image.channels * bytes_per_channel
 
 	data = make([]byte, capacity)
@@ -172,15 +178,6 @@ write :: proc(image: Image, allocator := context.allocator) -> (data: []byte, er
 	pixel_data := data[len(header):]
 	// @TODO: make sure image.pixels is valid FORMAT and SIZE
 	copy(pixel_data[:], image.pixels.buf[:])
-
-	// @TODO: do i need to care about endianness
-	// PPM 2 byte format is big endian
-	if bytes_per_channel == 2 {
-		pixels := mem.slice_data_cast([]u16be, pixel_data)
-		for p in &pixels {
-			p = u16be(transmute(u16) p)
-		}
-	}
 
 	return
 }
@@ -210,9 +207,7 @@ write_multiple :: proc(images: []Image, allocator := context.allocator) -> (data
 read_from_file :: proc(filename: string, allocator := context.allocator) -> (images: [dynamic]Image, err: Error) {
 	context.allocator = allocator
 
-	data, ok := os.read_entire_file(filename)
-	defer delete(data)
-
+	data, ok := os.read_entire_file(filename); defer delete(data)
 	if !ok {
 		return nil, .File_Not_Readable
 	}
@@ -223,8 +218,7 @@ read_from_file :: proc(filename: string, allocator := context.allocator) -> (ima
 write_to_file :: proc(filename: string, image: Image, allocator := context.allocator) -> (err: Error) {
 	context.allocator = allocator
 
-	data, error := write(image)
-	defer delete(data)
+	data, error := write(image); defer delete(data)
 	if error != .None {
 		return error
 	}
@@ -239,8 +233,7 @@ write_to_file :: proc(filename: string, image: Image, allocator := context.alloc
 write_multiple_to_file :: proc(filename: string, images: []Image, allocator := context.allocator) -> (err: Error) {
 	context.allocator = allocator
 
-	data, error := write_multiple(images)
-	defer delete(data)
+	data, error := write_multiple(images); defer delete(data)
 	if error != .None {
 		return error
 	}
@@ -251,8 +244,6 @@ write_multiple_to_file :: proc(filename: string, images: []Image, allocator := c
 
 	return
 }
-
-
 
 
 
@@ -267,16 +258,16 @@ read_header :: proc(data: []byte) -> (header: Header, err: Error) {
 
 	// have a list of fielda for easy iteration
 	width, height, maxval: int
-	header_fields := []^int{ &width, &height, &maxval }
+	header_fields := []^int{&width, &height, &maxval}
 
 	// states
-	in_comment := false
+	in_comment       := false
 	already_in_space := true
-	current_field := 0
-	current_value := header_fields[0]
+	current_field    := 0
+	current_value    := header_fields[0]
 
-	loop:
-	for d, i in data[len(SIGNATURE):] {
+
+	loop: for d, i in data[len(SIGNATURE):] {
 		// handle comments
 		if in_comment {
 			switch d {
@@ -293,7 +284,6 @@ read_header :: proc(data: []byte) -> (header: Header, err: Error) {
 		// handle whitespace
 		in_space := unicode.is_white_space(rune(d))
 		if in_space {
-			// still in space
 			if already_in_space {
 				continue
 			}
@@ -312,8 +302,11 @@ read_header :: proc(data: []byte) -> (header: Header, err: Error) {
 			if !unicode.is_digit(rune(d)) {
 				return header, .Invalid_Header_Value
 			}
+
 			// @TODO: could parse the digit in a better way
-			val, _ := strconv.parse_int(string([]byte{ d }))
+			val := int('0' - d)
+			// val, _ := strconv.parse_int(string([]byte{ d }))
+
 			current_value^ = current_value^ * 10 + val
 		}
 	}
@@ -326,9 +319,9 @@ read_header :: proc(data: []byte) -> (header: Header, err: Error) {
 		return header, .Invalid_Maxval
 	}
 
-	header.width = width
-	header.height = height
-	header.maxval = maxval
+	header.width        = width
+	header.height       = height
+	header.maxval       = maxval
 	header.pixel_length = width * height * CHANNELS_PER_PIXEL
 	if maxval > int(max(u8)) {
 		header.pixel_length *= size_of(u16)
@@ -339,9 +332,7 @@ read_header :: proc(data: []byte) -> (header: Header, err: Error) {
 
 
 
-
-
-// @TODO: there should be a builtin way to get this number
+// @TODO: I don't know if this is necessary, but there may be a built-in way to get this number
 @(private)
 BITS_PER_BYTE :: 8
 
