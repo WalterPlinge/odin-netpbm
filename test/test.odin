@@ -20,26 +20,30 @@ main :: proc() {
 			bytes.buffer_destroy(&img2.pixels)
 		}
 		err := ppm.write_multiple_to_file(FILE_NAME, []ppm.Image{ img1, img2 })
-	} else {
-		for _ in 0 ..< 1 {
-			imgs, err := ppm.read_from_file(FILE_NAME)
-			defer ppm.destroy(imgs)
-			if err != .None {
-				fmt.println(err)
-				return
-			}
-
-			fmt.println("edit image")
-
-			//edit_image(&imgs[0])
-			imgs[0], imgs[1] = imgs[1], imgs[0]
-
-			fmt.println("save image")
-
-			err = ppm.write_multiple_to_file(FILE_NAME, imgs[:])
-
-			fmt.println("end")
+		if err != .None {
+			fmt.println(err)
 		}
+		return
+	}
+
+	for _ in 0 ..< 1 {
+		imgs, err := ppm.read_from_file(FILE_NAME)
+		defer ppm.destroy(imgs)
+		if err != .None {
+			fmt.println(err)
+			return
+		}
+
+		fmt.println("edit image")
+
+		//edit_image(&imgs[0])
+		imgs[0], imgs[1] = imgs[1], imgs[0]
+
+		fmt.println("save image")
+
+		err = ppm.write_multiple_to_file(FILE_NAME, imgs[:])
+
+		fmt.println("end")
 	}
 
 	return
