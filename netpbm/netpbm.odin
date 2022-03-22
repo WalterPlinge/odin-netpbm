@@ -1,31 +1,55 @@
 /*
 	TODO
-	[-] specification
-		[x] comments
+		LEGACY
+			[ ] not implemented
+			[-] implemented partially
+			[x] implemented
+			[?] optional / considering
+			[!] requires rework
+	[-] formats
+		[-] PNM
+			[-] PBM (P1, P4)
+				[x] header
+				[ ] raster
+					[ ] binary
+					[ ] ascii
+			[-] PGM (P2, P5)
+				[x] header
+				[ ] raster
+					[ ] binary
+					[ ] ascii
+			[-] PPM (P3, P6)
+				[x] header
+				[ ] raster
+					[ ] binary
+					[ ] ascii
+		[-] PAM (P7)
+			[-] header
+			[ ] raster
+		[ ] PFM (Pf, PF)
+			[ ] header
+			[ ] raster
+	[-] misc. specification
+		[x] comments (PNM headers)
 		[-] maxval
-			[x] 1 byte values
-			[x] 2 byte values
-			[-] arbitrary maxvals (options and metadata)
+			[-] 1 byte values
+			[-] 2 byte values
+			[ ] arbitrary maxvals (options and metadata)
 			[?] endian conversion or info flag
-		[x] multiple images
+		[!] multiple images
 		[?] Gamma correction, is it necessary?
 	[-] reading
-		[x] memory
-		[x] file
+		[!] memory
+		[!] file
 		[?] stream/context
 	[-] writing
-		[x] memory
-		[x] file
+		[!] memory
+		[!] file
 		[?] stream/context
-	[x] use allocators
+	[-] use allocators
 	[-] proper errors
-	[-] pass options
-	[-] use core:image.Image.metadata
-	[ ] ascii version (P3)
-	[ ] PGM (P5, P2)
-	[ ] PBM (P4, P1)
-	[ ] PAM (P7)
-	[ ] PFM (Pf, PF)
+	[!] pass options
+	[!] use core:image.Image.metadata
 */
 package netpbm
 
@@ -52,8 +76,7 @@ Header :: struct {
 	height:       int,
 	maxval:       int,
 	depth:        int,
-	pixel_start:  int,
-	pixel_length: int,
+	total_bytes:  int,
 }
 
 Error :: enum {
@@ -62,11 +85,12 @@ Error :: enum {
 	// reading
 	File_Not_Readable,
 	Invalid_Signature,
-	Invalid_Character_In_Header,
-	Invalid_Header,
-	Invalid_Header_Value,
+	Invalid_Character_In_Header_Token,
+	Incomplete_Header,
+	Invalid_Width,
+	Invalid_Height,
 	Invalid_Maxval,
-	Invalid_Buffer_Size,
+	Invalid_Depth,
 
 	// writing
 	File_Not_Writable,
@@ -204,7 +228,7 @@ read_from_file :: proc(filename: string, allocator := context.allocator) -> (ima
 		return nil, .File_Not_Readable
 	}
 
-	return read(data)
+	return read_from_buffer(data)
 }
 
 read_from_buffer :: proc(data: []byte, allocator := context.allocator) -> (images: [dynamic]Image, err: Error) {
@@ -220,12 +244,12 @@ read_from_buffer :: proc(data: []byte, allocator := context.allocator) -> (image
 		using header
 
 		// pixel_length is calculated, so could be more than we have if payload is corrupt
-		if len(remaining_data) < pixel_start + pixel_length {
-			return images, .Invalid_Buffer_Size
-		}
+		// if len(remaining_data) < pixel_start + pixel_length {
+		// 	return images, .Invalid_Buffer_Size
+		// }
 
-		pixel_data    := remaining_data[pixel_start:][:pixel_length]
-		remaining_data = remaining_data[pixel_start + pixel_length:]
+		// pixel_data    := remaining_data[pixel_start:][:pixel_length]
+		// remaining_data = remaining_data[pixel_start + pixel_length:]
 
 		bytes_per_channel := maxval > int(max(u8)) \
 			? size_of(u16) \
@@ -241,7 +265,7 @@ read_from_buffer :: proc(data: []byte, allocator := context.allocator) -> (image
 		//info.maxval = maxval
 		//img.metadata = info
 
-		bytes.buffer_init(&img.pixels, pixel_data)
+		// bytes.buffer_init(&img.pixels, pixel_data)
 
 		append(&images, img)
 	}
@@ -275,19 +299,16 @@ parse_header :: proc(data: []byte) -> (header: Header, err: Error) {
 
 @(private)
 _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
-	HEADER_LENGTH :: 2
+	SIGNATURE_LENGTH :: 2
 	header_formats := []Format{.P1, .P2, .P3, .P4, .P5, .P6,}
 	header.format = header_formats[data[1] - '0' - 1]
 
 	// have a list of fielda for easy iteration
-	width, height, maxval: int
 	header_fields: []^int
-
-	needs_maxval := header.format != .P1 && header.format != .P4
-	if needs_maxval {
-		header_fields = {&width, &height, &maxval}
+	if header.format == .P1 || header.format == .P4 {
+		header_fields = {&header.width, &header.height}
 	} else {
-		header_fields = {&width, &height}
+		header_fields = {&header.width, &header.height, &header.maxval}
 	}
 
 	// loop state
@@ -296,7 +317,7 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
 	current_field    := 0
 	current_value    := header_fields[0]
 
-	parse_loop: for d, i in data[HEADER_LENGTH:] {
+	parse_loop: for d, i in data[SIGNATURE_LENGTH:] {
 		// handle comments
 		if in_comment {
 			switch d {
@@ -321,7 +342,7 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
 			// switch to next value
 			current_field += 1
 			if current_field == len(header_fields) {
-				header.pixel_start = i + HEADER_LENGTH + 1
+				header.total_bytes = i + SIGNATURE_LENGTH + 1
 				break parse_loop
 			}
 			current_value = header_fields[current_field]
@@ -329,130 +350,178 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
 			already_in_space = false
 
 			if !unicode.is_digit(rune(d)) {
-				return header, .Invalid_Character_In_Header
+				return header, .Invalid_Character_In_Header_Token
 			}
 
-			// @TODO: could parse the digit in a better way
+			//? could parse the digit in a better way
 			val := int(d - '0')
 			current_value^ = current_value^ * 10 + val
 		}
 	}
 
+	// limit checking
 	if current_field < len(header_fields) {
-		return header, .Invalid_Header
+		return header, .Incomplete_Header
 	}
 
-	if width < 1 || height < 1 {
-		return header, .Invalid_Header_Value
+	if header.width < 1 {
+		return header, .Invalid_Width
 	}
 
-	if needs_maxval && (maxval < 1 || maxval > int(max(u16))) {
-		return header, .Invalid_Maxval
+	if header.height < 1 {
+		return header, .Invalid_Height
 	}
 
-	header.width  = width
-	header.height = height
-	header.maxval = maxval
-
-	// also calculate the payload length
-	#partial switch header.format {
-		case .P1:
-			total_pixels := height * width
-			for c, i in data[header.pixel_start:] {
-				if c == '0' || c == '1' {
-					total_pixels -= 1
-				}
-				if total_pixels == 0 {
-					header.pixel_length = i + 1
-					break
-				}
-			}
-			if total_pixels > 0 {
-				return header, .Invalid_Buffer_Size
-			}
-
-		case .P2:
-			payload := data[header.pixel_start:]
-			total_pixels := height * width
-			for c, i in payload {
-				if unicode.is_digit(rune(c)) \
-				&& (i + 1 == len(payload) || unicode.is_white_space(rune(payload[i + 1]))) {
-					total_pixels -= 1
-				}
-				if total_pixels == 0 {
-					header.pixel_length = i + 1
-					break
-				}
-			}
-			if total_pixels > 0 {
-				return header, .Invalid_Buffer_Size
-			}
-
-		case .P3:
-			payload := data[header.pixel_start:]
-			total_pixels := height * width * 3
-			for c, i in payload {
-				if unicode.is_digit(rune(c)) \
-				&& (i + 1 == len(payload) || unicode.is_white_space(rune(payload[i + 1]))) {
-					total_pixels -= 1
-				}
-				if total_pixels == 0 {
-					header.pixel_length = i + 1
-					break
-				}
-			}
-			if total_pixels > 0 {
-				return header, .Invalid_Buffer_Size
-			}
-
-		case .P4: header.pixel_length = height * ((width - 1) / 8 + 1)
-		case .P5: header.pixel_length = height * width * (2 if maxval > int(max(u8)) else 1)
-		case .P6: header.pixel_length = height * width * (2 if maxval > int(max(u8)) else 1) * 3
+	if header.format != .P1 && header.format != .P4 {
+		if header.maxval < 1 || header.maxval > int(max(u16)) {
+			return header, .Invalid_Maxval
+		}
 	}
 
-	if header.pixel_start + header.pixel_length > len(data) {
-		return header, .Invalid_Buffer_Size
-	}
+	//? do we need to know the data start and end here,
+	//? or just the header size and we can do other calculations later
+	// #partial switch header.format {
+	// 	case .P1:
+	// 		total_pixels := height * width
+	// 		for c, i in data[header.pixel_start:] {
+	// 			if c == '0' || c == '1' {
+	// 				total_pixels -= 1
+	// 			}
+	// 			if total_pixels == 0 {
+	// 				header.pixel_length = i + 1
+	// 				break
+	// 			}
+	// 		}
+	// 		if total_pixels > 0 {
+	// 			return header, .Invalid_Buffer_Size
+	// 		}
+
+	// 	case .P2:
+	// 		payload := data[header.pixel_start:]
+	// 		total_pixels := height * width
+	// 		for c, i in payload {
+	// 			if unicode.is_digit(rune(c)) \
+	// 			&& (i + 1 == len(payload) || unicode.is_white_space(rune(payload[i + 1]))) {
+	// 				total_pixels -= 1
+	// 			}
+	// 			if total_pixels == 0 {
+	// 				header.pixel_length = i + 1
+	// 				break
+	// 			}
+	// 		}
+	// 		if total_pixels > 0 {
+	// 			return header, .Invalid_Buffer_Size
+	// 		}
+
+	// 	case .P3:
+	// 		payload := data[header.pixel_start:]
+	// 		total_pixels := height * width * 3
+	// 		for c, i in payload {
+	// 			if unicode.is_digit(rune(c)) \
+	// 			&& (i + 1 == len(payload) || unicode.is_white_space(rune(payload[i + 1]))) {
+	// 				total_pixels -= 1
+	// 			}
+	// 			if total_pixels == 0 {
+	// 				header.pixel_length = i + 1
+	// 				break
+	// 			}
+	// 		}
+	// 		if total_pixels > 0 {
+	// 			return header, .Invalid_Buffer_Size
+	// 		}
+
+	// 	case .P4: header.pixel_length = height * ((width - 1) / 8 + 1)
+	// 	case .P5: header.pixel_length = height * width * (2 if maxval > int(max(u8)) else 1)
+	// 	case .P6: header.pixel_length = height * width * (2 if maxval > int(max(u8)) else 1) * 3
+	// }
+
+	// if header.pixel_start + header.pixel_length > len(data) {
+	// 	return header, .Invalid_Buffer_Size
+	// }
 
 	return header, Error.None
 }
 
 @(private)
 _parse_header_pam :: proc(data: []byte) -> (header: Header, err: Error) {
-	assert(string(data[0:3]) == "P7\n", "Invalid PAM header magic number")
-	HEADER_LENGTH :: 3
+	if string(data[0:3]) != "P7\n" {
+		return header, .Invalid_Signature
+	}
+
+	// these strings help avoid allocation from strings.fields()
+	SIGNATURE_LENGTH :: 3
+	HEADER_WIDTH     :: "WIDTH"
+	HEADER_HEIGHT    :: "HEIGHT"
+	HEADER_MAXVAL    :: "MAXVAL"
+	HEADER_DEPTH     :: "DEPTH"
+	HEADER_TUPLTYPE  :: "TUPLTYPE"
+	HEADER_END       :: "ENDHDR\n"
+
+	// we can already work out the size of the header
 	header.format = .P7
-
-	HEADER_END :: "ENDHDR\n"
 	header_end_index := strings.index(string(data), HEADER_END)
+	header.total_bytes = header_end_index + len(HEADER_END)
 
-	line_iterator := string(data[HEADER_LENGTH : header_end_index + len(HEADER_END)])
+	// string buffer for the tupltype
+	tupltype: strings.Builder
+	strings.init_builder(&tupltype, context.temp_allocator)
+
+	line_iterator := string(data[SIGNATURE_LENGTH : header_end_index])
 	parse_loop: for line in strings.split_lines_iterator(&line_iterator) {
-		token := strings.fields(line, context.temp_allocator); defer delete(token)
-		if len(token) == 0 do continue
-		switch token[0] {
-			case "WIDTH": header.width, _ = strconv.parse_int(token[1])
-			case "HEIGHT": header.height, _ = strconv.parse_int(token[1])
-			case "MAXVAL": header.maxval, _ = strconv.parse_int(token[1])
-			case "DEPTH": header.depth, _ = strconv.parse_int(token[1])
-			case "TUPLTYPE": fmt.println("PAM TUPLTYPE NOT IMPLEMENTED")
-			case "ENDHDR": break parse_loop
-			case: continue
+		if len(line) == 0 || line[0] == '#' do continue
+
+		switch {
+			case HEADER_WIDTH == line[0 : len(HEADER_WIDTH)]:
+				header.width, _ = strconv.parse_int(strings.trim_space(line[len(HEADER_WIDTH):]))
+
+			case HEADER_HEIGHT == line[0 : len(HEADER_HEIGHT)]:
+				header.height, _ = strconv.parse_int(strings.trim_space(line[len(HEADER_HEIGHT):]))
+
+			case HEADER_MAXVAL == line[0 : len(HEADER_MAXVAL)]:
+				header.maxval, _ = strconv.parse_int(strings.trim_space(line[len(HEADER_MAXVAL):]))
+
+			case HEADER_DEPTH == line[0 : len(HEADER_DEPTH)]:
+				header.depth, _ = strconv.parse_int(strings.trim_space(line[len(HEADER_DEPTH):]))
+
+			case HEADER_TUPLTYPE == line[0 : len(HEADER_TUPLTYPE)]:
+				if len(tupltype.buf) == 0 {
+					fmt.sbprint(&tupltype, strings.trim_space(line[len(HEADER_TUPLTYPE):]))
+				} else {
+					fmt.sbprint(&tupltype, "", strings.trim_space(line[len(HEADER_TUPLTYPE):]))
+				}
+
+			case:
+				fmt.println(line)
 		}
 	}
 
-	if header.width < 1 || header.height < 1 || header.maxval < 1 || header.depth < 1 {
-		return header, .Invalid_Header_Value
+	if header.width < 1 {
+		return header, .Invalid_Width
 	}
 
-	header.pixel_start = header_end_index + len(HEADER_END)
-	header.pixel_length = header.height * header.width * header.depth * (2 if header.maxval > int(max(u8)) else 1)
+	if header.height < 1 {
+		return header, .Invalid_Height
+	}
+
+	if header.maxval < 1 {
+		return header, .Invalid_Maxval
+	}
+
+	if header.depth < 1 {
+		return header, .Invalid_Depth
+	}
+
+	fmt.println("tupltype:", strings.to_string(tupltype))
+
+	// header.pixel_start = header_end_index + len(HEADER_END)
+	// header.pixel_length = header.height * header.width * header.depth * (2 if header.maxval > int(max(u8)) else 1)
 
 	return header, Error.None
 }
 
 @(private)
 _parse_header_pfm :: proc(data: []byte) -> (header: Header, err: Error) {
+	fmt.eprintln("PFM FORMAT NOT IMPLEMENTED")
 	return
 }
 
