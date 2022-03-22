@@ -333,7 +333,7 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
 			}
 
 			// @TODO: could parse the digit in a better way
-			val := int('0' - d)
+			val := int(d - '0')
 			current_value^ = current_value^ * 10 + val
 		}
 	}
