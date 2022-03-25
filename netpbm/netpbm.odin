@@ -74,8 +74,10 @@ Header :: struct {
 	format:       Format,
 	width:        int,
 	height:       int,
-	maxval:       int,
-	depth:        int,
+	maxval:       int, // P2, P3, P5, P6, P7
+	depth:        int, // P7
+	tupltype:     string, // P7
+	scale:        f32, // Pf, PF
 	total_bytes:  int,
 }
 
@@ -283,6 +285,12 @@ parse_header :: proc(data: []byte) -> (header: Header, err: Error) {
 		P7    : width, height, depth, maxval, tupltype
 		Pf, PF: width, height, scale+endian
 	*/
+
+	// we need the signature and a space at least
+	if len(data) < 3 {
+		return header, .Incomplete_Header
+	}
+
 	if data[0] == 'P' {
 		switch data[1] {
 			case '1'..='6':
@@ -443,51 +451,49 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
 }
 
 @(private)
-_parse_header_pam :: proc(data: []byte) -> (header: Header, err: Error) {
+_parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (header: Header, err: Error) {
+	context.allocator = allocator
+
 	if string(data[0:3]) != "P7\n" {
 		return header, .Invalid_Signature
 	}
+	header.format = .P7
 
-	// these strings help avoid allocation from strings.fields()
+	// this helps us move around the header
 	SIGNATURE_LENGTH :: 3
-	HEADER_WIDTH     :: "WIDTH"
-	HEADER_HEIGHT    :: "HEIGHT"
-	HEADER_MAXVAL    :: "MAXVAL"
-	HEADER_DEPTH     :: "DEPTH"
-	HEADER_TUPLTYPE  :: "TUPLTYPE"
 	HEADER_END       :: "ENDHDR\n"
 
 	// we can already work out the size of the header
-	header.format = .P7
 	header_end_index := strings.index(string(data), HEADER_END)
+	if header_end_index == -1 {
+		return header, .Incomplete_Header
+	}
 	header.total_bytes = header_end_index + len(HEADER_END)
 
 	// string buffer for the tupltype
 	tupltype: strings.Builder
-	strings.init_builder(&tupltype, context.temp_allocator)
+	strings.init_builder(&tupltype, context.temp_allocator); defer strings.destroy_builder(&tupltype)
+	fmt.sbprint(&tupltype, "")
 
+	// PAM uses actual lines, so we can iterate easily
 	line_iterator := string(data[SIGNATURE_LENGTH : header_end_index])
 	parse_loop: for line in strings.split_lines_iterator(&line_iterator) {
+		line := line
+
 		if len(line) == 0 || line[0] == '#' do continue
 
-		switch {
-			case HEADER_WIDTH == line[0 : len(HEADER_WIDTH)]:
-				header.width, _ = strconv.parse_int(strings.trim_space(line[len(HEADER_WIDTH):]))
+		token, _ := strings.fields_iterator(&line)
 
-			case HEADER_HEIGHT == line[0 : len(HEADER_HEIGHT)]:
-				header.height, _ = strconv.parse_int(strings.trim_space(line[len(HEADER_HEIGHT):]))
-
-			case HEADER_MAXVAL == line[0 : len(HEADER_MAXVAL)]:
-				header.maxval, _ = strconv.parse_int(strings.trim_space(line[len(HEADER_MAXVAL):]))
-
-			case HEADER_DEPTH == line[0 : len(HEADER_DEPTH)]:
-				header.depth, _ = strconv.parse_int(strings.trim_space(line[len(HEADER_DEPTH):]))
-
-			case HEADER_TUPLTYPE == line[0 : len(HEADER_TUPLTYPE)]:
+		switch token {
+			case "WIDTH": header.width, _ = strconv.parse_int(strings.trim_space(line))
+			case "HEIGHT": header.height, _ = strconv.parse_int(strings.trim_space(line))
+			case "MAXVAL": header.maxval, _ = strconv.parse_int(strings.trim_space(line))
+			case "DEPTH": header.depth, _ = strconv.parse_int(strings.trim_space(line))
+			case "TUPLTYPE":
 				if len(tupltype.buf) == 0 {
-					fmt.sbprint(&tupltype, strings.trim_space(line[len(HEADER_TUPLTYPE):]))
+					fmt.sbprint(&tupltype, strings.trim_space(line))
 				} else {
-					fmt.sbprint(&tupltype, "", strings.trim_space(line[len(HEADER_TUPLTYPE):]))
+					fmt.sbprint(&tupltype, "", strings.trim_space(line))
 				}
 		}
 	}
@@ -508,18 +514,40 @@ _parse_header_pam :: proc(data: []byte) -> (header: Header, err: Error) {
 		return header, .Invalid_Depth
 	}
 
-	fmt.println("tupltype:", strings.to_string(tupltype))
-
-	// header.pixel_start = header_end_index + len(HEADER_END)
-	// header.pixel_length = header.height * header.width * header.depth * (2 if header.maxval > int(max(u8)) else 1)
+	header.tupltype = strings.clone(strings.to_string(tupltype), allocator)
 
 	return header, Error.None
 }
 
 @(private)
 _parse_header_pfm :: proc(data: []byte) -> (header: Header, err: Error) {
-	fmt.eprintln("PFM FORMAT NOT IMPLEMENTED")
-	return
+	// we can just cycle through tokens for PFM
+	field_iterator := string(data)
+
+	token, ok := strings.fields_iterator(&field_iterator)
+
+	switch token {
+		case "Pf": header.format = .Pf
+		case "PF": header.format = .PF
+		case: return header, .Invalid_Signature
+	}
+
+	token, ok = strings.fields_iterator(&field_iterator)
+	if !ok do return header, .Incomplete_Header
+	header.width, _ = strconv.parse_int(token)
+
+	token, ok = strings.fields_iterator(&field_iterator)
+	if !ok do return header, .Incomplete_Header
+	header.height, _ = strconv.parse_int(token)
+
+	token, ok = strings.fields_iterator(&field_iterator)
+	if !ok do return header, .Incomplete_Header
+	header.scale, _ = strconv.parse_f32(token)
+
+	// pointer math to get header size
+	header.total_bytes = int((uintptr(raw_data(field_iterator)) + 1) - uintptr(raw_data(data)))
+
+	return header, Error.None
 }
 
 

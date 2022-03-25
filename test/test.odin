@@ -16,6 +16,7 @@ main :: proc() {
 		header, err := netpbm.parse_header(transmute([]byte) t)
 		fmt.println(err, "\n", header, "\n")
 	}
+
 	// img := generate()
 	// defer bytes.buffer_destroy(&img.pixels)
 	// err := ppm.write(FILE_NAME, img)
@@ -159,6 +160,16 @@ DEPTH 3
 MAXVAL 255
 TUPLTYPE RGB
 ENDHDR
+`,
+
+	`Pf
+24 7
+1.23
+`,
+
+	`PF
+24 7
+-2.34
 `,
 }
 
