@@ -104,18 +104,11 @@ Error :: enum {
 
 
 
-destroy :: proc(images: [dynamic]Image) {
-	if images == nil {
-		return
+delete_header :: proc(using header: ^Header) {
+	if format == .P7 {
+		delete(tupltype)
+		tupltype = ""
 	}
-	images := images
-	for i in &images {
-		bytes.buffer_destroy(&i.pixels)
-		//if m, ok := i.metadata.(^PPM_Info); ok {
-		//	free(m)
-		//}
-	}
-	delete(images)
 }
 
 
@@ -565,3 +558,17 @@ CHANNELS_PER_PIXEL :: 3
 // Procedures         - snake_case
 // Local Variables    - snake_case
 // Constant Variables - SCREAMING_SNAKE_CASE
+
+destroy :: proc(images: [dynamic]Image) {
+	if images == nil {
+		return
+	}
+	images := images
+	for i in &images {
+		bytes.buffer_destroy(&i.pixels)
+		//if m, ok := i.metadata.(^PPM_Info); ok {
+		//	free(m)
+		//}
+	}
+	delete(images)
+}
