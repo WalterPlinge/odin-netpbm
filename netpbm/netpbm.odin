@@ -489,9 +489,6 @@ _parse_header_pam :: proc(data: []byte) -> (header: Header, err: Error) {
 				} else {
 					fmt.sbprint(&tupltype, "", strings.trim_space(line[len(HEADER_TUPLTYPE):]))
 				}
-
-			case:
-				fmt.println(line)
 		}
 	}
 
