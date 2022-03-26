@@ -10,9 +10,9 @@
 		[-] PNM
 			[-] PBM (P1, P4)
 				[x] header
-				[ ] raster
+				[-] raster
 					[ ] binary
-					[ ] ascii
+					[x] ascii
 			[-] PGM (P2, P5)
 				[x] header
 				[ ] raster
@@ -24,10 +24,10 @@
 					[ ] binary
 					[ ] ascii
 		[-] PAM (P7)
-			[-] header
+			[x] header
 			[ ] raster
-		[ ] PFM (Pf, PF)
-			[ ] header
+		[-] PFM (Pf, PF)
+			[x] header
 			[ ] raster
 	[-] misc. specification
 		[x] comments (PNM headers)
@@ -93,6 +93,7 @@ Error :: enum {
 	Invalid_Height,
 	Invalid_Maxval,
 	Invalid_Depth,
+	Buffer_Too_Small,
 
 	// writing
 	File_Not_Writable,
@@ -235,34 +236,31 @@ read_from_buffer :: proc(data: []byte, allocator := context.allocator) -> (image
 
 	// while we still have data
 	for len(remaining_data) > 0 {
-		header := parse_header(remaining_data) or_return
-		using header
+		header, h_err := parse_header(remaining_data, allocator)
+		if h_err != .None {
+			//? does this always mean that there was extra data in the file after the last image
+			if len(images) > 0 && h_err == .Invalid_Signature {
+				break
+			}
+			delete_header(&header)
+			err = h_err
+			return
+		}
 
-		// pixel_length is calculated, so could be more than we have if payload is corrupt
-		// if len(remaining_data) < pixel_start + pixel_length {
-		// 	return images, .Invalid_Buffer_Size
-		// }
+		img, bytes_decoded, d_err := decode_image(header, remaining_data[header.total_bytes:], allocator)
+		if d_err != .None {
+			bytes.buffer_destroy(&img.pixels)
+			delete_header(&header)
+			err = d_err
+			return
+		}
 
-		// pixel_data    := remaining_data[pixel_start:][:pixel_length]
-		// remaining_data = remaining_data[pixel_start + pixel_length:]
-
-		bytes_per_channel := maxval > int(max(u8)) \
-			? size_of(u16) \
-			: size_of(u8 )
-
-		img         := Image{}
-		img.width    = width
-		img.height   = height
-		img.channels = CHANNELS_PER_PIXEL
-		img.depth    = bytes_per_channel * BITS_PER_BYTE
-
-		//info := new(PPM_Info)
-		//info.maxval = maxval
-		//img.metadata = info
-
-		// bytes.buffer_init(&img.pixels, pixel_data)
+		//! needs an info struct
+		img.metadata = transmute(^image.PNG_Info) new(Header, allocator)
+		(transmute(^Header) img.metadata.(^image.PNG_Info))^ = header
 
 		append(&images, img)
+		remaining_data = remaining_data[bytes_decoded:]
 	}
 
 	return images, Error.None
@@ -270,7 +268,7 @@ read_from_buffer :: proc(data: []byte, allocator := context.allocator) -> (image
 
 
 
-parse_header :: proc(data: []byte) -> (header: Header, err: Error) {
+parse_header :: proc(data: []byte, allocator := context.allocator) -> (header: Header, err: Error) {
 	/*
 		P1, P4: width, height
 		P2, P5: width, height, maxval (0 < n < 65536)
@@ -289,7 +287,7 @@ parse_header :: proc(data: []byte) -> (header: Header, err: Error) {
 			case '1'..='6':
 				return _parse_header_pnm(data)
 			case '7':
-				return _parse_header_pam(data)
+				return _parse_header_pam(data, allocator)
 			case 'F', 'f':
 				return _parse_header_pfm(data)
 		}
@@ -308,6 +306,7 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
 	header_fields: []^int
 	if header.format == .P1 || header.format == .P4 {
 		header_fields = {&header.width, &header.height}
+		header.maxval = 1 // we know maxval for a bitmap
 	} else {
 		header_fields = {&header.width, &header.height, &header.maxval}
 	}
@@ -373,72 +372,9 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
 		return header, .Invalid_Height
 	}
 
-	if header.format != .P1 && header.format != .P4 {
-		if header.maxval < 1 || header.maxval > int(max(u16)) {
-			return header, .Invalid_Maxval
-		}
+	if header.maxval < 1 || header.maxval > int(max(u16)) {
+		return header, .Invalid_Maxval
 	}
-
-	//? do we need to know the data start and end here,
-	//? or just the header size and we can do other calculations later
-	// #partial switch header.format {
-	// 	case .P1:
-	// 		total_pixels := height * width
-	// 		for c, i in data[header.pixel_start:] {
-	// 			if c == '0' || c == '1' {
-	// 				total_pixels -= 1
-	// 			}
-	// 			if total_pixels == 0 {
-	// 				header.pixel_length = i + 1
-	// 				break
-	// 			}
-	// 		}
-	// 		if total_pixels > 0 {
-	// 			return header, .Invalid_Buffer_Size
-	// 		}
-
-	// 	case .P2:
-	// 		payload := data[header.pixel_start:]
-	// 		total_pixels := height * width
-	// 		for c, i in payload {
-	// 			if unicode.is_digit(rune(c)) \
-	// 			&& (i + 1 == len(payload) || unicode.is_white_space(rune(payload[i + 1]))) {
-	// 				total_pixels -= 1
-	// 			}
-	// 			if total_pixels == 0 {
-	// 				header.pixel_length = i + 1
-	// 				break
-	// 			}
-	// 		}
-	// 		if total_pixels > 0 {
-	// 			return header, .Invalid_Buffer_Size
-	// 		}
-
-	// 	case .P3:
-	// 		payload := data[header.pixel_start:]
-	// 		total_pixels := height * width * 3
-	// 		for c, i in payload {
-	// 			if unicode.is_digit(rune(c)) \
-	// 			&& (i + 1 == len(payload) || unicode.is_white_space(rune(payload[i + 1]))) {
-	// 				total_pixels -= 1
-	// 			}
-	// 			if total_pixels == 0 {
-	// 				header.pixel_length = i + 1
-	// 				break
-	// 			}
-	// 		}
-	// 		if total_pixels > 0 {
-	// 			return header, .Invalid_Buffer_Size
-	// 		}
-
-	// 	case .P4: header.pixel_length = height * ((width - 1) / 8 + 1)
-	// 	case .P5: header.pixel_length = height * width * (2 if maxval > int(max(u8)) else 1)
-	// 	case .P6: header.pixel_length = height * width * (2 if maxval > int(max(u8)) else 1) * 3
-	// }
-
-	// if header.pixel_start + header.pixel_length > len(data) {
-	// 	return header, .Invalid_Buffer_Size
-	// }
 
 	return header, Error.None
 }
@@ -545,6 +481,105 @@ _parse_header_pfm :: proc(data: []byte) -> (header: Header, err: Error) {
 
 
 
+decode_image :: proc(header: Header, data: []byte, allocator := context.allocator) -> (img: Image, bytes_decoded: int, err: Error) {
+	context.allocator = allocator
+
+	if header.total_bytes >= len(data) {
+		err = .Buffer_Too_Small
+		return
+	}
+
+	if header.format == .P1 {
+		img = Image{
+			width = header.width,
+			height = header.height,
+			channels = 1,
+			depth = 1,
+		}
+		bytes.buffer_init_allocator(&img.pixels, 0, img.width * img.height, allocator)
+
+		for c in data {
+			switch c {
+				case '0': bytes.buffer_write_byte(&img.pixels, 0)
+				case '1': bytes.buffer_write_byte(&img.pixels, 1)
+			}
+			bytes_decoded += 1
+
+			if bytes.buffer_length(&img.pixels) == bytes.buffer_capacity(&img.pixels) {
+				break
+			}
+		}
+
+		if bytes.buffer_length(&img.pixels) < bytes.buffer_capacity(&img.pixels) {
+			err = .Buffer_Too_Small
+			return
+		}
+	}
+
+	return img, len(data), Error.None
+
+	// #partial switch header.format {
+	// 	case .P1:
+	// 		total_pixels := height * width
+	// 		for c, i in data[header.pixel_start:] {
+	// 			if c == '0' || c == '1' {
+	// 				total_pixels -= 1
+	// 			}
+	// 			if total_pixels == 0 {
+	// 				header.pixel_length = i + 1
+	// 				break
+	// 			}
+	// 		}
+	// 		if total_pixels > 0 {
+	// 			return header, .Invalid_Buffer_Size
+	// 		}
+
+	// 	case .P2:
+	// 		payload := data[header.pixel_start:]
+	// 		total_pixels := height * width
+	// 		for c, i in payload {
+	// 			if unicode.is_digit(rune(c)) \
+	// 			&& (i + 1 == len(payload) || unicode.is_white_space(rune(payload[i + 1]))) {
+	// 				total_pixels -= 1
+	// 			}
+	// 			if total_pixels == 0 {
+	// 				header.pixel_length = i + 1
+	// 				break
+	// 			}
+	// 		}
+	// 		if total_pixels > 0 {
+	// 			return header, .Invalid_Buffer_Size
+	// 		}
+
+	// 	case .P3:
+	// 		payload := data[header.pixel_start:]
+	// 		total_pixels := height * width * 3
+	// 		for c, i in payload {
+	// 			if unicode.is_digit(rune(c)) \
+	// 			&& (i + 1 == len(payload) || unicode.is_white_space(rune(payload[i + 1]))) {
+	// 				total_pixels -= 1
+	// 			}
+	// 			if total_pixels == 0 {
+	// 				header.pixel_length = i + 1
+	// 				break
+	// 			}
+	// 		}
+	// 		if total_pixels > 0 {
+	// 			return header, .Invalid_Buffer_Size
+	// 		}
+
+	// 	case .P4: header.pixel_length = height * ((width - 1) / 8 + 1)
+	// 	case .P5: header.pixel_length = height * width * (2 if maxval > int(max(u8)) else 1)
+	// 	case .P6: header.pixel_length = height * width * (2 if maxval > int(max(u8)) else 1) * 3
+	// }
+
+	// if header.pixel_start + header.pixel_length > len(data) {
+	// 	return header, .Invalid_Buffer_Size
+	// }
+}
+
+
+
 // @TODO: I don't know if this is necessary, there may be a built-in way to get this number
 @(private)
 BITS_PER_BYTE :: 8
@@ -559,7 +594,7 @@ CHANNELS_PER_PIXEL :: 3
 // Local Variables    - snake_case
 // Constant Variables - SCREAMING_SNAKE_CASE
 
-destroy :: proc(images: [dynamic]Image) {
+destroy_images :: proc(images: [dynamic]Image) {
 	if images == nil {
 		return
 	}

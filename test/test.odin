@@ -12,10 +12,25 @@ import "../netpbm"
 FILE_NAME :: "p6.ppm"
 
 main :: proc() {
-	for t in tests {
-		header, err := netpbm.parse_header(transmute([]byte) t)
-		fmt.println(err, "\n", header, "\n")
+	imgs, err := netpbm.read_from_buffer(transmute([]byte) tests[0])
+	fmt.println(err)
+	for y in 0 ..< imgs[0].height {
+		for x in 0 ..< imgs[0].width {
+			if imgs[0].pixels.buf[y * imgs[0].width + x] == 0 {
+				fmt.print(" ")
+			} else {
+				fmt.print("X")
+			}
+		}
+		fmt.println("")
 	}
+	fmt.println(imgs)
+	fmt.println((transmute(^netpbm.Header) imgs[0].metadata.(^image.PNG_Info))^)
+
+	// for t in tests {
+	// 	header, err := netpbm.parse_header(transmute([]byte) t)
+	// 	fmt.println(err, "\n", header, "\n")
+	// }
 
 	// img := generate()
 	// defer bytes.buffer_destroy(&img.pixels)
