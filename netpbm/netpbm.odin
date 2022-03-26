@@ -93,6 +93,8 @@ Error :: enum {
 	Invalid_Height,
 	Invalid_Maxval,
 	Invalid_Depth,
+	Invalid_Tupltype,
+	Invalid_Scale,
 	Buffer_Too_Small,
 
 	// writing
@@ -299,8 +301,11 @@ parse_header :: proc(data: []byte, allocator := context.allocator) -> (header: H
 @(private)
 _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
 	SIGNATURE_LENGTH :: 2
-	header_formats := []Format{.P1, .P2, .P3, .P4, .P5, .P6,}
-	header.format = header_formats[data[1] - '0' - 1]
+
+	{
+		header_formats := []Format{.P1, .P2, .P3, .P4, .P5, .P6,}
+		header.format = header_formats[data[1] - '0' - 1]
+	}
 
 	// have a list of fielda for easy iteration
 	header_fields: []^int
@@ -411,18 +416,28 @@ _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (head
 
 		if len(line) == 0 || line[0] == '#' do continue
 
-		token, _ := strings.fields_iterator(&line)
+		token, ok := strings.fields_iterator(&line)
+		field := strings.trim_space(line)
 
 		switch token {
-			case "WIDTH": header.width, _ = strconv.parse_int(strings.trim_space(line))
-			case "HEIGHT": header.height, _ = strconv.parse_int(strings.trim_space(line))
-			case "MAXVAL": header.maxval, _ = strconv.parse_int(strings.trim_space(line))
-			case "DEPTH": header.depth, _ = strconv.parse_int(strings.trim_space(line))
+			case "WIDTH":
+				header.width, ok = strconv.parse_int(field)
+				if !ok do return header, .Invalid_Width
+			case "HEIGHT":
+				header.height, ok = strconv.parse_int(field)
+				if !ok do return header, .Invalid_Height
+			case "MAXVAL":
+				header.maxval, ok = strconv.parse_int(field)
+				if !ok do return header, .Invalid_Maxval
+			case "DEPTH":
+				header.depth, ok = strconv.parse_int(field)
+				if !ok do return header, .Invalid_Depth
 			case "TUPLTYPE":
+				if len(field) == 0 do return header, .Invalid_Tupltype
 				if len(tupltype.buf) == 0 {
-					fmt.sbprint(&tupltype, strings.trim_space(line))
+					fmt.sbprint(&tupltype, field)
 				} else {
-					fmt.sbprint(&tupltype, "", strings.trim_space(line))
+					fmt.sbprint(&tupltype, "", field)
 				}
 		}
 	}
@@ -462,15 +477,15 @@ _parse_header_pfm :: proc(data: []byte) -> (header: Header, err: Error) {
 	}
 
 	token, ok = strings.fields_iterator(&field_iterator)
-	if !ok do return header, .Incomplete_Header
+	if !ok do return header, .Invalid_Width
 	header.width, _ = strconv.parse_int(token)
 
 	token, ok = strings.fields_iterator(&field_iterator)
-	if !ok do return header, .Incomplete_Header
+	if !ok do return header, .Invalid_Height
 	header.height, _ = strconv.parse_int(token)
 
 	token, ok = strings.fields_iterator(&field_iterator)
-	if !ok do return header, .Incomplete_Header
+	if !ok do return header, .Invalid_Scale
 	header.scale, _ = strconv.parse_f32(token)
 
 	// pointer math to get header size
