@@ -478,15 +478,18 @@ _parse_header_pfm :: proc(data: []byte) -> (header: Header, err: Error) {
 
 	token, ok = strings.fields_iterator(&field_iterator)
 	if !ok do return header, .Invalid_Width
-	header.width, _ = strconv.parse_int(token)
+	header.width, ok = strconv.parse_int(token)
+	if !ok do return header, .Invalid_Width
 
 	token, ok = strings.fields_iterator(&field_iterator)
 	if !ok do return header, .Invalid_Height
-	header.height, _ = strconv.parse_int(token)
+	header.height, ok = strconv.parse_int(token)
+	if !ok do return header, .Invalid_Height
 
 	token, ok = strings.fields_iterator(&field_iterator)
 	if !ok do return header, .Invalid_Scale
-	header.scale, _ = strconv.parse_f32(token)
+	header.scale, ok = strconv.parse_f32(token)
+	if !ok do return header, .Invalid_Scale
 
 	// pointer math to get header size
 	header.total_bytes = int((uintptr(raw_data(field_iterator)) + 1) - uintptr(raw_data(data)))
