@@ -106,6 +106,8 @@ Error :: enum {
 	Invalid_Tupltype,
 	Invalid_Scale,
 	Buffer_Too_Small,
+	Invalid_ASCII_Token_In_Buffer,
+	Invalid_Buffer_Value,
 
 	// writing
 	File_Not_Writable,
@@ -575,8 +577,73 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 
 	// PGM
 	case .P2:
+		img = Image {
+			width    = header.width,
+			height   = header.height,
+			channels = 1,
+			depth    = 2 if header.maxval > int(max(u8)) else 1,
+		}
+		bytes.buffer_init_allocator(&img.pixels, 0, img.width * img.height * img.depth, allocator)
+
+		field_iterator := string(data)
+		for field in strings.fields_iterator(&field_iterator) {
+			bytes_decoded = int(uintptr(raw_data(field_iterator)) - uintptr(raw_data(data)))
+
+			value, ok := strconv.parse_int(field)
+			if !ok {
+				err = .Invalid_ASCII_Token_In_Buffer
+				return
+			}
+			//? do we want to enforce the maxval, the limit, or neither
+			if value > int(max(u16)) /*header.maxval*/ {
+				err = .Invalid_Buffer_Value
+				return
+			}
+
+			switch img.depth {
+			case 1:
+				bytes.buffer_write_byte(&img.pixels, u8(value))
+			case 2:
+				vb := transmute([2]u8) u16(value)
+				bytes.buffer_write(&img.pixels, vb[:])
+			}
+
+
+			if len(img.pixels.buf) == cap(img.pixels.buf) {
+				break
+			}
+		}
+
+		if len(img.pixels.buf) < cap(img.pixels.buf) {
+			err = .Buffer_Too_Small
+			return
+		}
 
 	case .P5:
+		img = Image {
+			width    = header.width,
+			height   = header.height,
+			channels = 1,
+			depth    = 2 if header.maxval > int(max(u8)) else 1,
+		}
+
+		img_size := img.width * img.height * img.depth
+		if len(data) < img_size {
+			err = .Buffer_Too_Small
+			return
+		}
+
+		bytes.buffer_init_allocator(&img.pixels, img_size, img_size, allocator)
+		mem.copy(raw_data(img.pixels.buf), raw_data(data), img_size)
+		bytes_decoded = img_size
+
+		//? maybe endian conversion is not necessary
+		if img.depth == 2 {
+			pixels := mem.slice_data_cast([]u16, img.pixels.buf[:])
+			for p in &pixels {
+				p = u16(transmute(u16be) p)
+			}
+		}
 
 	// PPM
 	case .P3:
@@ -611,9 +678,9 @@ destroy_images :: proc(images: [dynamic]Image) {
 	images := images
 	for i in &images {
 		bytes.buffer_destroy(&i.pixels)
-		//if m, ok := i.metadata.(^PPM_Info); ok {
-		//	free(m)
-		//}
+		header := transmute(^Header) i.metadata.(^image.PNG_Info)
+		delete_header(header)
+		free(header)
 	}
 	delete(images)
 }

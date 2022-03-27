@@ -16,16 +16,22 @@ main :: proc() {
 	start := time.now(); defer fmt.eprintln("Time:", time.diff(start, time.now()))
 
 	stdout: strings.Builder
-	for t in ([]int{0, 3}) {
-		imgs, err := netpbm.read_from_buffer(transmute([]byte) tests[t])
+	colours := []rune{'.', '-', '=', '@', '#'}
+	for t in ([]int{0, 3, 1, 4}) {
+		imgs, err := netpbm.read_from_buffer(transmute([]byte) tests[t]); defer netpbm.destroy_images(imgs)
+		if err != .None {
+			fmt.sbprintln(&stdout, err)
+			continue
+		}
+		header := (transmute(^netpbm.Header) imgs[0].metadata.(^image.PNG_Info))^
 		fmt.sbprintln(&stdout, err)
 		for y in 0 ..< imgs[0].height {
 			for x in 0 ..< imgs[0].width {
-				if imgs[0].pixels.buf[y * imgs[0].width + x] == 0 {
-					fmt.sbprint(&stdout, ".")
-				} else {
-					fmt.sbprint(&stdout, "X")
+				v := imgs[0].pixels.buf[y * imgs[0].width + x]
+				if v == 1 && header.maxval == 1 {
+					v = 4
 				}
+				fmt.sbprint(&stdout, colours[v])
 			}
 			fmt.sbprintln(&stdout, "")
 		}
@@ -123,7 +129,7 @@ generate :: proc() -> image.Image {
 }
 
 tests := []string{
-	`P1
+`P1
 # feep.pbm
 24 7
 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
@@ -135,20 +141,20 @@ tests := []string{
 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 `,
 
-	`P2
+`P2
 # feep.pgm
 24 7
 15
-0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
-0  3  3  3  3  0  0  7  7  7  7  0  0 11 11 11 11  0  0 15 15 15 15  0
-0  3  0  0  0  0  0  7  0  0  0  0  0 11  0  0  0  0  0 15  0  0 15  0
-0  3  3  3  0  0  0  7  7  7  0  0  0 11 11 11  0  0  0 15 15 15 15  0
-0  3  0  0  0  0  0  7  0  0  0  0  0 11  0  0  0  0  0 15  0  0  0  0
-0  3  0  0  0  0  0  7  7  7  7  0  0 11 11 11 11  0  0 15  0  0  0  0
-0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+0 1 1 1 1 0 0 2 2 2 2 0 0 3 3 3 3 0 0 4 4 4 4 0
+0 1 0 0 0 0 0 2 0 0 0 0 0 3 0 0 0 0 0 4 0 0 4 0
+0 1 1 1 0 0 0 2 2 2 0 0 0 3 3 3 0 0 0 4 4 4 4 0
+0 1 0 0 0 0 0 2 0 0 0 0 0 3 0 0 0 0 0 4 0 0 0 0
+0 1 0 0 0 0 0 2 2 2 2 0 0 3 3 3 3 0 0 4 0 0 0 0
+0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 `,
 
-	`P3
+`P3
 # feep.ppm
 4 4
 15
@@ -158,21 +164,17 @@ tests := []string{
 15  0 15    0  0  0    0  0  0    0  0  0
 `,
 
-	"P4\n23 5\n\x79\xe7\x9e\x41\x04\x12\x71\xc7\x1e\x41\x04\x10\x41\xe7\x90",
+"P4\n23 5\n\x79\xe7\x9e\x41\x04\x12\x71\xc7\x1e\x41\x04\x10\x41\xe7\x90",
 
-	`P5
-# feep.pgm
-24 7
-15
-`,
+"P5\n22 5\n4\n\x01\x01\x01\x01\x00\x00\x02\x02\x02\x02\x00\x00\x03\x03\x03\x03\x00\x00\x04\x04\x04\x04\x01\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x04\x00\x00\x04\x01\x01\x01\x00\x00\x00\x02\x02\x02\x00\x00\x00\x03\x03\x03\x00\x00\x00\x04\x04\x04\x04\x01\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x04\x00\x00\x00\x01\x00\x00\x00\x00\x00\x02\x02\x02\x02\x00\x00\x03\x03\x03\x03\x00\x00\x04\x00\x00\x00",
 
-	`P6
+`P6
 # feep.ppm
 4 4
 15
 `,
 
-	`P7
+`P7
 WIDTH 227
 HEIGHT 149
 DEPTH 3
@@ -181,12 +183,12 @@ TUPLTYPE RGB
 ENDHDR
 `,
 
-	`Pf
+`Pf
 24 7
 1.23
 `,
 
-	`PF
+`PF
 24 7
 -2.34
 `,
