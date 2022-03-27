@@ -10,8 +10,8 @@
 		[-] PNM
 			[-] PBM (P1, P4)
 				[x] header
-				[-] raster
-					[ ] binary
+				[x] raster
+					[x] binary
 					[x] ascii
 			[-] PGM (P2, P5)
 				[x] header
@@ -69,16 +69,26 @@ Image :: image.Image
 Format :: enum {
 	P1, P2, P3, P4, P5, P6, P7, Pf, PF,
 }
+Formats :: bit_set[Format]
+
+PBM :: Formats{.P1, .P4}
+PGM :: Formats{.P2, .P5}
+PPM :: Formats{.P3, .P6}
+PNM :: PBM + PGM + PPM
+PAM :: Formats{.P7}
+PFM :: Formats{.Pf, .PF}
+
+
 
 Header :: struct {
-	format:       Format,
-	width:        int,
-	height:       int,
-	maxval:       int, // P2, P3, P5, P6, P7
-	depth:        int, // P7
-	tupltype:     string, // P7
-	scale:        f32, // Pf, PF
-	total_bytes:  int,
+	format:      Format,
+	width:       int,
+	height:      int,
+	maxval:      int, // P2, P3, P5, P6, P7
+	depth:       int, // P7
+	tupltype:    string, // P7
+	scale:       f32, // Pf, PF
+	total_bytes: int,
 }
 
 Error :: enum {
@@ -179,10 +189,8 @@ write_to_buffer :: proc(image: Image, allocator := context.allocator) -> (data: 
 write_multiple_to_file :: proc(filename: string, images: []Image, allocator := context.allocator) -> (err: Error) {
 	context.allocator = allocator
 
-	data, error := write_multiple_to_buffer(images); defer delete(data)
-	if error != .None {
-		return error
-	}
+	data: []byte; defer delete(data)
+	data = write_multiple_to_buffer(images) or_return
 
 	if !os.write_entire_file(filename, data[:]) {
 		return .File_Not_Writable
@@ -191,7 +199,7 @@ write_multiple_to_file :: proc(filename: string, images: []Image, allocator := c
 	return
 }
 
-write_multiple_to_buffer :: proc(images: []Image, allocator := context.allocator) -> (data: [dynamic]byte, err: Error) {
+write_multiple_to_buffer :: proc(images: []Image, allocator := context.allocator) -> (data: []byte, err: Error) {
 	context.allocator = allocator
 
 	// we can't write an empty list
@@ -202,11 +210,12 @@ write_multiple_to_buffer :: proc(images: []Image, allocator := context.allocator
 
 	// just keep appending each image as written
 	// calculating the size beforehand would either be too memory intensive or too clever for now
-	data = make([dynamic]byte)
+	res := make([dynamic]byte)
 	for img in &images {
 		d := write_to_buffer(img) or_return
-		append(&data, ..d)
+		append(&res, ..d)
 	}
+	data = res[:]
 
 	return
 }
@@ -249,7 +258,7 @@ read_from_buffer :: proc(data: []byte, allocator := context.allocator) -> (image
 			return
 		}
 
-		img, bytes_decoded, d_err := decode_image(header, remaining_data[header.total_bytes:], allocator)
+		img, img_bytes, d_err := decode_image(header, remaining_data[header.total_bytes:], allocator)
 		if d_err != .None {
 			bytes.buffer_destroy(&img.pixels)
 			delete_header(&header)
@@ -262,7 +271,7 @@ read_from_buffer :: proc(data: []byte, allocator := context.allocator) -> (image
 		(transmute(^Header) img.metadata.(^image.PNG_Info))^ = header
 
 		append(&images, img)
-		remaining_data = remaining_data[bytes_decoded:]
+		remaining_data = remaining_data[img_bytes:]
 	}
 
 	return images, Error.None
@@ -286,12 +295,12 @@ parse_header :: proc(data: []byte, allocator := context.allocator) -> (header: H
 
 	if data[0] == 'P' {
 		switch data[1] {
-			case '1'..='6':
-				return _parse_header_pnm(data)
-			case '7':
-				return _parse_header_pam(data, allocator)
-			case 'F', 'f':
-				return _parse_header_pfm(data)
+		case '1' ..= '6':
+			return _parse_header_pnm(data)
+		case '7':
+			return _parse_header_pam(data, allocator)
+		case 'F', 'f':
+			return _parse_header_pfm(data)
 		}
 	}
 
@@ -303,13 +312,13 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
 	SIGNATURE_LENGTH :: 2
 
 	{
-		header_formats := []Format{.P1, .P2, .P3, .P4, .P5, .P6,}
+		header_formats := []Format{.P1, .P2, .P3, .P4, .P5, .P6}
 		header.format = header_formats[data[1] - '0' - 1]
 	}
 
 	// have a list of fielda for easy iteration
 	header_fields: []^int
-	if header.format == .P1 || header.format == .P4 {
+	if header.format in PBM {
 		header_fields = {&header.width, &header.height}
 		header.maxval = 1 // we know maxval for a bitmap
 	} else {
@@ -317,18 +326,18 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
 	}
 
 	// loop state
-	in_comment       := false
+	in_comment := false
 	already_in_space := true
-	current_field    := 0
-	current_value    := header_fields[0]
+	current_field := 0
+	current_value := header_fields[0]
 
 	parse_loop: for d, i in data[SIGNATURE_LENGTH:] {
 		// handle comments
 		if in_comment {
 			switch d {
-				// comments only go up to next carriage return or line feed
-				case '\r', '\n':
-					in_comment = false
+			// comments only go up to next carriage return or line feed
+			case '\r', '\n':
+				in_comment = false
 			}
 			continue
 		} else if d == '#' {
@@ -395,7 +404,7 @@ _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (head
 
 	// this helps us move around the header
 	SIGNATURE_LENGTH :: 3
-	HEADER_END       :: "ENDHDR\n"
+	HEADER_END :: "ENDHDR\n"
 
 	// we can already work out the size of the header
 	header_end_index := strings.index(string(data), HEADER_END)
@@ -406,7 +415,8 @@ _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (head
 
 	// string buffer for the tupltype
 	tupltype: strings.Builder
-	strings.init_builder(&tupltype, context.temp_allocator); defer strings.destroy_builder(&tupltype)
+	strings.init_builder(&tupltype, context.temp_allocator)
+	defer strings.destroy_builder(&tupltype)
 	fmt.sbprint(&tupltype, "")
 
 	// PAM uses actual lines, so we can iterate easily
@@ -416,29 +426,29 @@ _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (head
 
 		if len(line) == 0 || line[0] == '#' do continue
 
-		token, ok := strings.fields_iterator(&line)
-		field := strings.trim_space(line)
+		field, ok := strings.fields_iterator(&line)
+		value := strings.trim_space(line)
 
-		switch token {
-			case "WIDTH":
-				header.width, ok = strconv.parse_int(field)
-				if !ok do return header, .Invalid_Width
-			case "HEIGHT":
-				header.height, ok = strconv.parse_int(field)
-				if !ok do return header, .Invalid_Height
-			case "MAXVAL":
-				header.maxval, ok = strconv.parse_int(field)
-				if !ok do return header, .Invalid_Maxval
-			case "DEPTH":
-				header.depth, ok = strconv.parse_int(field)
-				if !ok do return header, .Invalid_Depth
-			case "TUPLTYPE":
-				if len(field) == 0 do return header, .Invalid_Tupltype
-				if len(tupltype.buf) == 0 {
-					fmt.sbprint(&tupltype, field)
-				} else {
-					fmt.sbprint(&tupltype, "", field)
-				}
+		switch field {
+		case "WIDTH":
+			header.width, ok = strconv.parse_int(value)
+			if !ok do return header, .Invalid_Width
+		case "HEIGHT":
+			header.height, ok = strconv.parse_int(value)
+			if !ok do return header, .Invalid_Height
+		case "MAXVAL":
+			header.maxval, ok = strconv.parse_int(value)
+			if !ok do return header, .Invalid_Maxval
+		case "DEPTH":
+			header.depth, ok = strconv.parse_int(value)
+			if !ok do return header, .Invalid_Depth
+		case "TUPLTYPE":
+			if len(value) == 0 do return header, .Invalid_Tupltype
+			if len(tupltype.buf) == 0 {
+				fmt.sbprint(&tupltype, value)
+			} else {
+				fmt.sbprint(&tupltype, "", value)
+			}
 		}
 	}
 
@@ -468,27 +478,30 @@ _parse_header_pfm :: proc(data: []byte) -> (header: Header, err: Error) {
 	// we can just cycle through tokens for PFM
 	field_iterator := string(data)
 
-	token, ok := strings.fields_iterator(&field_iterator)
+	field, ok := strings.fields_iterator(&field_iterator)
 
-	switch token {
-		case "Pf": header.format = .Pf
-		case "PF": header.format = .PF
-		case: return header, .Invalid_Signature
+	switch field {
+	case "Pf":
+		header.format = .Pf
+	case "PF":
+		header.format = .PF
+	case:
+		return header, .Invalid_Signature
 	}
 
-	token, ok = strings.fields_iterator(&field_iterator)
+	field, ok = strings.fields_iterator(&field_iterator)
 	if !ok do return header, .Invalid_Width
-	header.width, ok = strconv.parse_int(token)
+	header.width, ok = strconv.parse_int(field)
 	if !ok do return header, .Invalid_Width
 
-	token, ok = strings.fields_iterator(&field_iterator)
+	field, ok = strings.fields_iterator(&field_iterator)
 	if !ok do return header, .Invalid_Height
-	header.height, ok = strconv.parse_int(token)
+	header.height, ok = strconv.parse_int(field)
 	if !ok do return header, .Invalid_Height
 
-	token, ok = strings.fields_iterator(&field_iterator)
+	field, ok = strings.fields_iterator(&field_iterator)
 	if !ok do return header, .Invalid_Scale
-	header.scale, ok = strconv.parse_f32(token)
+	header.scale, ok = strconv.parse_f32(field)
 	if !ok do return header, .Invalid_Scale
 
 	// pointer math to get header size
@@ -507,24 +520,46 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 		return
 	}
 
-	if header.format == .P1 {
-		img = Image{
-			width = header.width,
-			height = header.height,
+	if header.format in PBM {
+		img = Image {
+			width    = header.width,
+			height   = header.height,
 			channels = 1,
-			depth = 1,
+			depth    = 1,
 		}
 		bytes.buffer_init_allocator(&img.pixels, 0, img.width * img.height, allocator)
 
-		for c in data {
-			switch c {
-				case '0': bytes.buffer_write_byte(&img.pixels, 0)
-				case '1': bytes.buffer_write_byte(&img.pixels, 1)
-			}
-			bytes_decoded += 1
+		#partial switch header.format {
+		case .P1:
+			for c in data {
+				switch c {
+				case '0':
+					bytes.buffer_write_byte(&img.pixels, 0)
+				case '1':
+					bytes.buffer_write_byte(&img.pixels, 1)
+				}
+				bytes_decoded += 1
 
-			if bytes.buffer_length(&img.pixels) == bytes.buffer_capacity(&img.pixels) {
-				break
+				if bytes.buffer_length(&img.pixels) == bytes.buffer_capacity(&img.pixels) {
+					break
+				}
+			}
+
+		case .P4:
+			for d in data {
+				for b in 1 ..= 8 {
+					bit := byte(8 - b)
+					p := (d & (1 << bit)) >> bit
+					bytes.buffer_write_byte(&img.pixels, p)
+					if bytes.buffer_length(&img.pixels) % img.width == 0 {
+						break
+					}
+				}
+				bytes_decoded += 1
+
+				if bytes.buffer_length(&img.pixels) == bytes.buffer_capacity(&img.pixels) {
+					break
+				}
 			}
 		}
 
@@ -534,66 +569,7 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 		}
 	}
 
-	return img, len(data), Error.None
-
-	// #partial switch header.format {
-	// 	case .P1:
-	// 		total_pixels := height * width
-	// 		for c, i in data[header.pixel_start:] {
-	// 			if c == '0' || c == '1' {
-	// 				total_pixels -= 1
-	// 			}
-	// 			if total_pixels == 0 {
-	// 				header.pixel_length = i + 1
-	// 				break
-	// 			}
-	// 		}
-	// 		if total_pixels > 0 {
-	// 			return header, .Invalid_Buffer_Size
-	// 		}
-
-	// 	case .P2:
-	// 		payload := data[header.pixel_start:]
-	// 		total_pixels := height * width
-	// 		for c, i in payload {
-	// 			if unicode.is_digit(rune(c)) \
-	// 			&& (i + 1 == len(payload) || unicode.is_white_space(rune(payload[i + 1]))) {
-	// 				total_pixels -= 1
-	// 			}
-	// 			if total_pixels == 0 {
-	// 				header.pixel_length = i + 1
-	// 				break
-	// 			}
-	// 		}
-	// 		if total_pixels > 0 {
-	// 			return header, .Invalid_Buffer_Size
-	// 		}
-
-	// 	case .P3:
-	// 		payload := data[header.pixel_start:]
-	// 		total_pixels := height * width * 3
-	// 		for c, i in payload {
-	// 			if unicode.is_digit(rune(c)) \
-	// 			&& (i + 1 == len(payload) || unicode.is_white_space(rune(payload[i + 1]))) {
-	// 				total_pixels -= 1
-	// 			}
-	// 			if total_pixels == 0 {
-	// 				header.pixel_length = i + 1
-	// 				break
-	// 			}
-	// 		}
-	// 		if total_pixels > 0 {
-	// 			return header, .Invalid_Buffer_Size
-	// 		}
-
-	// 	case .P4: header.pixel_length = height * ((width - 1) / 8 + 1)
-	// 	case .P5: header.pixel_length = height * width * (2 if maxval > int(max(u8)) else 1)
-	// 	case .P6: header.pixel_length = height * width * (2 if maxval > int(max(u8)) else 1) * 3
-	// }
-
-	// if header.pixel_start + header.pixel_length > len(data) {
-	// 	return header, .Invalid_Buffer_Size
-	// }
+	return
 }
 
 
@@ -604,13 +580,6 @@ BITS_PER_BYTE :: 8
 
 @(private)
 CHANNELS_PER_PIXEL :: 3
-
-// Import Name        - snake_case (but prefer single word)
-// Types              - Ada_Case
-// Enum Values        - Ada_Case
-// Procedures         - snake_case
-// Local Variables    - snake_case
-// Constant Variables - SCREAMING_SNAKE_CASE
 
 destroy_images :: proc(images: [dynamic]Image) {
 	if images == nil {
@@ -625,3 +594,10 @@ destroy_images :: proc(images: [dynamic]Image) {
 	}
 	delete(images)
 }
+
+// Import Name        - snake_case (but prefer single word)
+// Types              - Ada_Case
+// Enum Values        - Ada_Case
+// Procedures         - snake_case
+// Local Variables    - snake_case
+// Constant Variables - SCREAMING_SNAKE_CASE

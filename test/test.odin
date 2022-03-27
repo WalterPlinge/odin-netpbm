@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:image"
 import "core:mem"
 import "core:os"
+import "core:strings"
 // import "core:time"
 
 import "../netpbm"
@@ -12,20 +13,24 @@ import "../netpbm"
 FILE_NAME :: "p6.ppm"
 
 main :: proc() {
-	imgs, err := netpbm.read_from_buffer(transmute([]byte) tests[0])
-	fmt.println(err)
-	for y in 0 ..< imgs[0].height {
-		for x in 0 ..< imgs[0].width {
-			if imgs[0].pixels.buf[y * imgs[0].width + x] == 0 {
-				fmt.print(" ")
-			} else {
-				fmt.print("X")
+	stdout: strings.Builder
+	for t in ([]int{0, 3}) {
+		imgs, err := netpbm.read_from_buffer(transmute([]byte) tests[t])
+		fmt.sbprintln(&stdout, err)
+		for y in 0 ..< imgs[0].height {
+			for x in 0 ..< imgs[0].width {
+				if imgs[0].pixels.buf[y * imgs[0].width + x] == 0 {
+					fmt.sbprint(&stdout, " ")
+				} else {
+					fmt.sbprint(&stdout, "X")
+				}
 			}
+			fmt.sbprintln(&stdout, "")
 		}
-		fmt.println("")
 	}
-	fmt.println(imgs)
-	fmt.println((transmute(^netpbm.Header) imgs[0].metadata.(^image.PNG_Info))^)
+	fmt.println(strings.to_string(stdout))
+	// fmt.println(imgs)
+	// fmt.println((transmute(^netpbm.Header) imgs[0].metadata.(^image.PNG_Info))^)
 
 	// for t in tests {
 	// 	header, err := netpbm.parse_header(transmute([]byte) t)
@@ -151,10 +156,7 @@ tests := []string{
 15  0 15    0  0  0    0  0  0    0  0  0
 `,
 
-	`P4
-# feep.pbm
-24 7
-`,
+	"P4\n23 5\n\x79\xe7\x9e\x41\x04\x12\x71\xc7\x1e\x41\x04\x10\x41\xe7\x90",
 
 	`P5
 # feep.pgm
