@@ -6,13 +6,15 @@ import "core:image"
 import "core:mem"
 import "core:os"
 import "core:strings"
-// import "core:time"
+import "core:time"
 
 import "../netpbm"
 
 FILE_NAME :: "p6.ppm"
 
 main :: proc() {
+	start := time.now(); defer fmt.eprintln("Time:", time.diff(start, time.now()))
+
 	stdout: strings.Builder
 	for t in ([]int{0, 3}) {
 		imgs, err := netpbm.read_from_buffer(transmute([]byte) tests[t])
@@ -20,7 +22,7 @@ main :: proc() {
 		for y in 0 ..< imgs[0].height {
 			for x in 0 ..< imgs[0].width {
 				if imgs[0].pixels.buf[y * imgs[0].width + x] == 0 {
-					fmt.sbprint(&stdout, " ")
+					fmt.sbprint(&stdout, ".")
 				} else {
 					fmt.sbprint(&stdout, "X")
 				}

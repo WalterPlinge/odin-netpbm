@@ -8,7 +8,7 @@
 			[!] requires rework
 	[-] formats
 		[-] PNM
-			[-] PBM (P1, P4)
+			[x] PBM (P1, P4)
 				[x] header
 				[x] raster
 					[x] binary
@@ -515,12 +515,9 @@ _parse_header_pfm :: proc(data: []byte) -> (header: Header, err: Error) {
 decode_image :: proc(header: Header, data: []byte, allocator := context.allocator) -> (img: Image, bytes_decoded: int, err: Error) {
 	context.allocator = allocator
 
-	if header.total_bytes >= len(data) {
-		err = .Buffer_Too_Small
-		return
-	}
-
-	if header.format in PBM {
+	switch header.format {
+	// PBM
+	case .P1:
 		img = Image {
 			width    = header.width,
 			height   = header.height,
@@ -529,44 +526,70 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 		}
 		bytes.buffer_init_allocator(&img.pixels, 0, img.width * img.height, allocator)
 
-		#partial switch header.format {
-		case .P1:
-			for c in data {
-				switch c {
-				case '0':
-					bytes.buffer_write_byte(&img.pixels, 0)
-				case '1':
-					bytes.buffer_write_byte(&img.pixels, 1)
-				}
-				bytes_decoded += 1
-
-				if bytes.buffer_length(&img.pixels) == bytes.buffer_capacity(&img.pixels) {
-					break
-				}
+		for c in data {
+			switch c {
+			case '0', '1':
+				bytes.buffer_write_byte(&img.pixels, c - '0')
 			}
+			bytes_decoded += 1
 
-		case .P4:
-			for d in data {
-				for b in 1 ..= 8 {
-					bit := byte(8 - b)
-					p := (d & (1 << bit)) >> bit
-					bytes.buffer_write_byte(&img.pixels, p)
-					if bytes.buffer_length(&img.pixels) % img.width == 0 {
-						break
-					}
-				}
-				bytes_decoded += 1
-
-				if bytes.buffer_length(&img.pixels) == bytes.buffer_capacity(&img.pixels) {
-					break
-				}
+			if len(img.pixels.buf) == cap(img.pixels.buf) {
+				break
 			}
 		}
 
-		if bytes.buffer_length(&img.pixels) < bytes.buffer_capacity(&img.pixels) {
+		if len(img.pixels.buf) < cap(img.pixels.buf) {
 			err = .Buffer_Too_Small
 			return
 		}
+
+	case .P4:
+		img = Image {
+			width    = header.width,
+			height   = header.height,
+			channels = 1,
+			depth    = 1,
+		}
+		bytes.buffer_init_allocator(&img.pixels, 0, img.width * img.height, allocator)
+
+		for d in data {
+			for b in 1 ..= 8 {
+				bit := byte(8 - b)
+				pix := (d & (1 << bit)) >> bit
+				bytes.buffer_write_byte(&img.pixels, pix)
+				if len(img.pixels.buf) % img.width == 0 {
+					break
+				}
+			}
+			bytes_decoded += 1
+
+			if len(img.pixels.buf) == cap(img.pixels.buf) {
+				break
+			}
+		}
+
+		if len(img.pixels.buf) < cap(img.pixels.buf) {
+			err = .Buffer_Too_Small
+			return
+		}
+
+	// PGM
+	case .P2:
+
+	case .P5:
+
+	// PPM
+	case .P3:
+
+	case .P6:
+
+	// PAM
+	case .P7:
+
+	// PFM
+	case .Pf:
+
+	case .PF:
 	}
 
 	return
