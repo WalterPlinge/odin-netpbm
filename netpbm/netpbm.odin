@@ -4,51 +4,53 @@
 			[ ] not implemented
 			[-] implemented partially
 			[x] implemented
+			[o] tested
 			[?] optional / considering
 			[!] requires rework
 	[-] formats
-		[-] PNM
+		[x] PNM
 			[x] PBM (P1, P4)
 				[x] header
 				[x] raster
 					[x] binary
 					[x] ascii
-			[-] PGM (P2, P5)
+			[x] PGM (P2, P5)
 				[x] header
-				[ ] raster
-					[ ] binary
-					[ ] ascii
-			[-] PPM (P3, P6)
+				[x] raster
+					[x] binary
+					[x] ascii
+			[x] PPM (P3, P6)
 				[x] header
-				[ ] raster
-					[ ] binary
-					[ ] ascii
+				[x] raster
+					[x] binary
+					[x] ascii
 		[-] PAM (P7)
+			[-] header
+				[?] error on duplicate fields (apart from tupltype)
+			[x] raster
+		[x] PFM (Pf, PF)
 			[x] header
-			[ ] raster
-		[-] PFM (Pf, PF)
-			[x] header
-			[ ] raster
+			[x] raster
 	[-] misc. specification
 		[x] comments (PNM headers)
-		[-] maxval
-			[-] 1 byte values
-			[-] 2 byte values
-			[ ] arbitrary maxvals (options and metadata)
+		[x] maxval
+			[x] 1 byte values
+			[x] 2 byte values
+			[x] arbitrary maxvals (options and metadata)
 			[?] endian conversion or info flag
-		[!] multiple images
+		[ ] multiple images
 		[?] Gamma correction, is it necessary?
-	[-] reading
-		[!] memory
-		[!] file
+	[x] reading
+		[x] memory
+		[x] file
 		[?] stream/context
-	[-] writing
-		[!] memory
-		[!] file
+	[ ] writing
+		[ ] memory
+		[ ] file
 		[?] stream/context
-	[-] use allocators
+	[x] use allocators
 	[-] proper errors
-	[!] pass options
+	[ ] pass options
 	[!] use core:image.Image.metadata
 */
 package netpbm
@@ -77,17 +79,33 @@ PPM :: Formats{.P3, .P6}
 PNM :: PBM + PGM + PPM
 PAM :: Formats{.P7}
 PFM :: Formats{.Pf, .PF}
+ASCII :: Formats{.P1, .P2, .P3}
+BINARY :: Formats{.P4, .P5, .P6} + PAM + PFM
 
 
 
+// P1, P4: width, height
+// P2, P5: width, height, maxval
+// P3, P6: width, height, maxval
+// P7    : width, height, maxval, depth (channels), tupltype
+// Pf, PF: width, height, scale+endian
+
+// Some aesthetic differences from the specifications:
+// `channels` is for `depth` in PAM specification
+// `depth` is instead to know how many bytes will fit `maxval` (consistent with `core:image`)
+// `scale` and `endianness` are separated, so `scale` will always be positive
+// `endianness` will only be `Little` for a negative `scale` PFM
+// `endianness` does not represent the returned image buffer, that will be native
 Header :: struct {
 	format:      Format,
 	width:       int,
 	height:      int,
-	maxval:      int, // P2, P3, P5, P6, P7
-	depth:       int, // P7
-	tupltype:    string, // P7
-	scale:       f32, // Pf, PF
+	channels:    int,
+	depth:       int,
+	maxval:      int,
+	tupltype:    string,
+	scale:       f32,
+	endianness:  enum{Big, Little},
 	total_bytes: int,
 }
 
@@ -97,24 +115,18 @@ Error :: enum {
 	// reading
 	File_Not_Readable,
 	Invalid_Signature,
-	Invalid_Character_In_Header_Token,
+	Invalid_Header_Token_Character,
 	Incomplete_Header,
+	Invalid_Value,
 	Invalid_Width,
 	Invalid_Height,
 	Invalid_Maxval,
-	Invalid_Depth,
+	Invalid_Channels_PAM_Depth,
 	Invalid_Tupltype,
 	Invalid_Scale,
 	Buffer_Too_Small,
-	Invalid_ASCII_Token_In_Buffer,
+	Invalid_Buffer_ASCII_Token,
 	Invalid_Buffer_Value,
-
-	// writing
-	File_Not_Writable,
-	Invalid_Channel_Count,
-	Invalid_Image_Depth,
-	Invalid_Image_Info,
-	Empty_List,
 }
 
 
@@ -128,167 +140,46 @@ delete_header :: proc(using header: ^Header) {
 
 
 
-write :: proc {
-	write_to_file,
-	write_to_buffer,
-	write_multiple_to_file,
-	write_multiple_to_buffer,
-}
-
-write_to_file :: proc(filename: string, image: Image, allocator := context.allocator) -> (err: Error) {
-	context.allocator = allocator
-
-	data: []byte; defer delete(data)
-	data = write_to_buffer(image) or_return
-
-	if !os.write_entire_file(filename, data) {
-		return .File_Not_Writable
-	}
-
-	return
-}
-
-write_to_buffer :: proc(image: Image, allocator := context.allocator) -> (data: []byte, err: Error) {
-	context.allocator = allocator
-
-	if image.channels != CHANNELS_PER_PIXEL {
-		return nil, .Invalid_Channel_Count
-	}
-
-	if image.depth != size_of(u8 ) * BITS_PER_BYTE \
-	&& image.depth != size_of(u16) * BITS_PER_BYTE {
-		return nil, .Invalid_Image_Depth
-	}
-
-	// @TODO: maxval should probably come from an options struct
-	maxval := image.depth == BITS_PER_BYTE \
-		? int(max(u8 )) \
-		: int(max(u16))
-	//info, ok := image.metadata.(^PPM_Info)
-	//if !ok {
-	//	return nil, .Invalid_Image_Info
-	//}
-	//maxval := info.maxval
-
-	// format header string
-	header := fmt.tprintf("%s\n%v %v\n%v\n", "P6", image.width, image.height, maxval)
-
-	// Calculate capacity
-	bytes_per_channel := image.depth / BITS_PER_BYTE
-	// @TODO: overflow protection ?
-	capacity := len(header) + image.width * image.height * image.channels * bytes_per_channel
-
-	data = make([]byte, capacity)
-
-	copy(data[:], header)
-	pixel_data := data[len(header):]
-	// @TODO: make sure image.pixels is valid FORMAT and SIZE
-	copy(pixel_data[:], image.pixels.buf[:])
-
-	return
-}
-
-write_multiple_to_file :: proc(filename: string, images: []Image, allocator := context.allocator) -> (err: Error) {
-	context.allocator = allocator
-
-	data: []byte; defer delete(data)
-	data = write_multiple_to_buffer(images) or_return
-
-	if !os.write_entire_file(filename, data[:]) {
-		return .File_Not_Writable
-	}
-
-	return
-}
-
-write_multiple_to_buffer :: proc(images: []Image, allocator := context.allocator) -> (data: []byte, err: Error) {
-	context.allocator = allocator
-
-	// we can't write an empty list
-	if images == nil {
-		return nil, .Empty_List
-	}
-	images := images
-
-	// just keep appending each image as written
-	// calculating the size beforehand would either be too memory intensive or too clever for now
-	res := make([dynamic]byte)
-	for img in &images {
-		d := write_to_buffer(img) or_return
-		append(&res, ..d)
-	}
-	data = res[:]
-
-	return
-}
-
-
-
 read :: proc {
 	read_from_file,
 	read_from_buffer,
 }
 
-read_from_file :: proc(filename: string, allocator := context.allocator) -> (images: [dynamic]Image, err: Error) {
+read_from_file :: proc(filename: string, allocator := context.allocator) -> (img: Image, err: Error) {
 	context.allocator = allocator
 
 	data, ok := os.read_entire_file(filename); defer delete(data)
-	if !ok {
-		return nil, .File_Not_Readable
-	}
+	if !ok do return img, .File_Not_Readable
 
 	return read_from_buffer(data)
 }
 
-read_from_buffer :: proc(data: []byte, allocator := context.allocator) -> (images: [dynamic]Image, err: Error) {
+read_from_buffer :: proc(data: []byte, allocator := context.allocator) -> (img: Image, err: Error) {
 	context.allocator = allocator
 
-	// we should have at least one
-	reserve(&images, 1)
-	remaining_data := data
+	hdr: Header; defer delete_header(&hdr)
+	hdr = parse_header(data) or_return
 
-	// while we still have data
-	for len(remaining_data) > 0 {
-		header, h_err := parse_header(remaining_data, allocator)
-		if h_err != .None {
-			//? does this always mean that there was extra data in the file after the last image
-			if len(images) > 0 && h_err == .Invalid_Signature {
-				break
-			}
-			delete_header(&header)
-			err = h_err
-			return
-		}
+	img_data := data[hdr.total_bytes:]
 
-		img, img_bytes, d_err := decode_image(header, remaining_data[header.total_bytes:], allocator)
-		if d_err != .None {
-			bytes.buffer_destroy(&img.pixels)
-			delete_header(&header)
-			err = d_err
-			return
-		}
+	img_bytes: int
+	img, img_bytes = decode_image(hdr, img_data) or_return
 
-		//! needs an info struct
-		img.metadata = transmute(^image.PNG_Info) new(Header, allocator)
-		(transmute(^Header) img.metadata.(^image.PNG_Info))^ = header
-
-		append(&images, img)
-		remaining_data = remaining_data[img_bytes:]
+	//! needs an info struct
+	new_hdr := new(Header)
+	new_hdr^ = hdr
+	if hdr.tupltype != "" {
+		new_hdr.tupltype = strings.clone(hdr.tupltype)
 	}
+	img.metadata = transmute(^image.PNG_Info) new_hdr
 
-	return images, Error.None
+	return img, Error.None
 }
 
 
 
 parse_header :: proc(data: []byte, allocator := context.allocator) -> (header: Header, err: Error) {
-	/*
-		P1, P4: width, height
-		P2, P5: width, height, maxval (0 < n < 65536)
-		P3, P6: width, height, maxval (0 < n < 65536)
-		P7    : width, height, depth, maxval, tupltype
-		Pf, PF: width, height, scale+endian
-	*/
+	context.allocator = allocator
 
 	// we need the signature and a space at least
 	if len(data) < 3 {
@@ -366,7 +257,7 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
 			already_in_space = false
 
 			if !unicode.is_digit(rune(d)) {
-				return header, .Invalid_Character_In_Header_Token
+				return header, .Invalid_Header_Token_Character
 			}
 
 			//? could parse the digit in a better way
@@ -375,22 +266,24 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
 		}
 	}
 
+	// set extra info
+	header.channels = 3 if header.format in PPM else 1
+	header.depth = 2 if header.maxval > int(max(u8)) else 1
+
 	// limit checking
 	if current_field < len(header_fields) {
 		return header, .Incomplete_Header
 	}
-
 	if header.width < 1 {
 		return header, .Invalid_Width
 	}
-
 	if header.height < 1 {
 		return header, .Invalid_Height
 	}
-
 	if header.maxval < 1 || header.maxval > int(max(u16)) {
 		return header, .Invalid_Maxval
 	}
+
 
 	return header, Error.None
 }
@@ -417,8 +310,7 @@ _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (head
 
 	// string buffer for the tupltype
 	tupltype: strings.Builder
-	strings.init_builder(&tupltype, context.temp_allocator)
-	defer strings.destroy_builder(&tupltype)
+	strings.init_builder(&tupltype, context.temp_allocator); defer strings.destroy_builder(&tupltype)
 	fmt.sbprint(&tupltype, "")
 
 	// PAM uses actual lines, so we can iterate easily
@@ -426,7 +318,9 @@ _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (head
 	parse_loop: for line in strings.split_lines_iterator(&line_iterator) {
 		line := line
 
-		if len(line) == 0 || line[0] == '#' do continue
+		if len(line) == 0 || line[0] == '#' {
+			continue
+		}
 
 		field, ok := strings.fields_iterator(&line)
 		value := strings.trim_space(line)
@@ -435,17 +329,24 @@ _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (head
 		case "WIDTH":
 			header.width, ok = strconv.parse_int(value)
 			if !ok do return header, .Invalid_Width
+
 		case "HEIGHT":
 			header.height, ok = strconv.parse_int(value)
 			if !ok do return header, .Invalid_Height
+
+		case "DEPTH":
+			header.channels, ok = strconv.parse_int(value)
+			if !ok do return header, .Invalid_Channels_PAM_Depth
+
 		case "MAXVAL":
 			header.maxval, ok = strconv.parse_int(value)
 			if !ok do return header, .Invalid_Maxval
-		case "DEPTH":
-			header.depth, ok = strconv.parse_int(value)
-			if !ok do return header, .Invalid_Depth
+
 		case "TUPLTYPE":
-			if len(value) == 0 do return header, .Invalid_Tupltype
+			if len(value) == 0 {
+				return header, .Invalid_Tupltype
+			}
+
 			if len(tupltype.buf) == 0 {
 				fmt.sbprint(&tupltype, value)
 			} else {
@@ -454,23 +355,24 @@ _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (head
 		}
 	}
 
+	// extra info
+	header.depth = 2 if header.maxval > int(max(u8)) else 1
+
+	// limit checking
 	if header.width < 1 {
 		return header, .Invalid_Width
 	}
-
 	if header.height < 1 {
 		return header, .Invalid_Height
 	}
-
 	if header.maxval < 1 {
 		return header, .Invalid_Maxval
 	}
-
 	if header.depth < 1 {
-		return header, .Invalid_Depth
+		return header, .Invalid_Channels_PAM_Depth
 	}
 
-	header.tupltype = strings.clone(strings.to_string(tupltype), allocator)
+	header.tupltype = strings.clone(strings.to_string(tupltype))
 
 	return header, Error.None
 }
@@ -485,29 +387,53 @@ _parse_header_pfm :: proc(data: []byte) -> (header: Header, err: Error) {
 	switch field {
 	case "Pf":
 		header.format = .Pf
+		header.channels = 1
 	case "PF":
 		header.format = .PF
+		header.channels = 3
 	case:
 		return header, .Invalid_Signature
 	}
 
+	// floating point
+	header.depth = 4
+
+	// width
 	field, ok = strings.fields_iterator(&field_iterator)
 	if !ok do return header, .Invalid_Width
 	header.width, ok = strconv.parse_int(field)
 	if !ok do return header, .Invalid_Width
 
+	// height
 	field, ok = strings.fields_iterator(&field_iterator)
 	if !ok do return header, .Invalid_Height
 	header.height, ok = strconv.parse_int(field)
 	if !ok do return header, .Invalid_Height
 
+	// scale (sign is endianness)
 	field, ok = strings.fields_iterator(&field_iterator)
 	if !ok do return header, .Invalid_Scale
 	header.scale, ok = strconv.parse_f32(field)
 	if !ok do return header, .Invalid_Scale
 
+	if header.scale < 0.0 {
+		header.endianness = .Little
+		header.scale = -header.scale
+	}
+
 	// pointer math to get header size
 	header.total_bytes = int((uintptr(raw_data(field_iterator)) + 1) - uintptr(raw_data(data)))
+
+	// limit checking
+	if header.width < 1 {
+		return header, .Invalid_Width
+	}
+	if header.height < 1 {
+		return header, .Invalid_Height
+	}
+	if header.scale == 0.0 {
+		return header, .Invalid_Scale
+	}
 
 	return header, Error.None
 }
@@ -517,17 +443,84 @@ _parse_header_pfm :: proc(data: []byte) -> (header: Header, err: Error) {
 decode_image :: proc(header: Header, data: []byte, allocator := context.allocator) -> (img: Image, bytes_decoded: int, err: Error) {
 	context.allocator = allocator
 
-	switch header.format {
-	// PBM
-	case .P1:
-		img = Image {
-			width    = header.width,
-			height   = header.height,
-			channels = 1,
-			depth    = 1,
-		}
-		bytes.buffer_init_allocator(&img.pixels, 0, img.width * img.height, allocator)
+	img = Image {
+		width    = header.width,
+		height   = header.height,
+		channels = header.channels,
+		depth    = header.depth,
+	}
 
+	buffer_size := img.width * img.height * img.channels * img.depth
+
+	// we can check data size for binary formats
+	if header.format in BINARY {
+		if header.format == .P4 {
+			p4_size := (img.width / 8 + 1) * img.height
+			if len(data) < p4_size {
+				return img, bytes_decoded, .Buffer_Too_Small
+			}
+		} else {
+			if len(data) < buffer_size {
+				return img, bytes_decoded, .Buffer_Too_Small
+			}
+		}
+	}
+
+	// for ASCII and P4, we use length for the termination condition, so start at 0
+	// BINARY will be a simple memcopy so the buffer length should also be initialised
+	if header.format in ASCII || header.format == .P4 {
+		bytes.buffer_init_allocator(&img.pixels, 0, buffer_size)
+	} else {
+		bytes.buffer_init_allocator(&img.pixels, buffer_size, buffer_size)
+	}
+
+	switch header.format {
+	// Compressed binary
+	case .P4:
+		for d in data {
+			for b in 1 ..= 8 {
+				bit := byte(8 - b)
+				pix := (d & (1 << bit)) >> bit
+				bytes.buffer_write_byte(&img.pixels, pix)
+				if len(img.pixels.buf) % img.width == 0 {
+					break
+				}
+			}
+			bytes_decoded += 1
+
+			if len(img.pixels.buf) == cap(img.pixels.buf) {
+				break
+			}
+		}
+
+	// Simple binary
+	case .P5, .P6, .P7, .Pf, .PF:
+		mem.copy(raw_data(img.pixels.buf), raw_data(data), buffer_size)
+		bytes_decoded = buffer_size
+
+		if header.format in PFM {
+			pixels := mem.slice_data_cast([]f32, img.pixels.buf[:])
+			if header.endianness == .Little {
+				for p in &pixels {
+					p = f32(transmute(f32le) p)
+				}
+			} else {
+				for p in &pixels {
+					p = f32(transmute(f32be) p)
+				}
+			}
+		} else {
+			//? maybe endian conversion is not necessary
+			if img.depth == 2 {
+				pixels := mem.slice_data_cast([]u16, img.pixels.buf[:])
+				for p in &pixels {
+					p = u16(transmute(u16be) p)
+				}
+			}
+		}
+
+	// If-it-looks-like-a-bitmap ASCII
+	case .P1:
 		for c in data {
 			switch c {
 			case '0', '1':
@@ -545,55 +538,18 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 			return
 		}
 
-	case .P4:
-		img = Image {
-			width    = header.width,
-			height   = header.height,
-			channels = 1,
-			depth    = 1,
-		}
-		bytes.buffer_init_allocator(&img.pixels, 0, img.width * img.height, allocator)
-
-		for d in data {
-			for b in 1 ..= 8 {
-				bit := byte(8 - b)
-				pix := (d & (1 << bit)) >> bit
-				bytes.buffer_write_byte(&img.pixels, pix)
-				if len(img.pixels.buf) % img.width == 0 {
-					break
-				}
-			}
-			bytes_decoded += 1
-
-			if len(img.pixels.buf) == cap(img.pixels.buf) {
-				break
-			}
-		}
-
-		if len(img.pixels.buf) < cap(img.pixels.buf) {
-			err = .Buffer_Too_Small
-			return
-		}
-
-	// PGM
-	case .P2:
-		img = Image {
-			width    = header.width,
-			height   = header.height,
-			channels = 1,
-			depth    = 2 if header.maxval > int(max(u8)) else 1,
-		}
-		bytes.buffer_init_allocator(&img.pixels, 0, img.width * img.height * img.depth, allocator)
-
+	// Token ASCII
+	case .P2, .P3:
 		field_iterator := string(data)
 		for field in strings.fields_iterator(&field_iterator) {
 			bytes_decoded = int(uintptr(raw_data(field_iterator)) - uintptr(raw_data(data)))
 
 			value, ok := strconv.parse_int(field)
 			if !ok {
-				err = .Invalid_ASCII_Token_In_Buffer
+				err = .Invalid_Buffer_ASCII_Token
 				return
 			}
+
 			//? do we want to enforce the maxval, the limit, or neither
 			if value > int(max(u16)) /*header.maxval*/ {
 				err = .Invalid_Buffer_Value
@@ -608,7 +564,6 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 				bytes.buffer_write(&img.pixels, vb[:])
 			}
 
-
 			if len(img.pixels.buf) == cap(img.pixels.buf) {
 				break
 			}
@@ -618,45 +573,6 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 			err = .Buffer_Too_Small
 			return
 		}
-
-	case .P5:
-		img = Image {
-			width    = header.width,
-			height   = header.height,
-			channels = 1,
-			depth    = 2 if header.maxval > int(max(u8)) else 1,
-		}
-
-		img_size := img.width * img.height * img.depth
-		if len(data) < img_size {
-			err = .Buffer_Too_Small
-			return
-		}
-
-		bytes.buffer_init_allocator(&img.pixels, img_size, img_size, allocator)
-		mem.copy(raw_data(img.pixels.buf), raw_data(data), img_size)
-		bytes_decoded = img_size
-
-		//? maybe endian conversion is not necessary
-		if img.depth == 2 {
-			pixels := mem.slice_data_cast([]u16, img.pixels.buf[:])
-			for p in &pixels {
-				p = u16(transmute(u16be) p)
-			}
-		}
-
-	// PPM
-	case .P3:
-
-	case .P6:
-
-	// PAM
-	case .P7:
-
-	// PFM
-	case .Pf:
-
-	case .PF:
 	}
 
 	return
@@ -664,30 +580,9 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 
 
 
-// @TODO: I don't know if this is necessary, there may be a built-in way to get this number
-@(private)
-BITS_PER_BYTE :: 8
-
-@(private)
-CHANNELS_PER_PIXEL :: 3
-
-destroy_images :: proc(images: [dynamic]Image) {
-	if images == nil {
-		return
-	}
-	images := images
-	for i in &images {
-		bytes.buffer_destroy(&i.pixels)
-		header := transmute(^Header) i.metadata.(^image.PNG_Info)
-		delete_header(header)
-		free(header)
-	}
-	delete(images)
+destroy_image :: proc(img: ^Image) {
+	bytes.buffer_destroy(&img.pixels)
+	header := transmute(^Header) img.metadata.(^image.PNG_Info)
+	delete_header(header)
+	free(header)
 }
-
-// Import Name        - snake_case (but prefer single word)
-// Types              - Ada_Case
-// Enum Values        - Ada_Case
-// Procedures         - snake_case
-// Local Variables    - snake_case
-// Constant Variables - SCREAMING_SNAKE_CASE

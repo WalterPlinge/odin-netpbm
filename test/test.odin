@@ -17,17 +17,36 @@ main :: proc() {
 
 	stdout: strings.Builder
 	colours := []rune{'.', '-', '=', '@', '#'}
-	for t in ([]int{0, 3, 1, 4}) {
-		imgs, err := netpbm.read_from_buffer(transmute([]byte) tests[t]); defer netpbm.destroy_images(imgs)
-		if err != .None {
-			fmt.sbprintln(&stdout, err)
+
+	for t in ([]int{0, 3, 1, 4, 2, 5}) {
+		img, err := netpbm.read_from_buffer(transmute([]byte) tests[t]); defer netpbm.destroy_image(&img)
+		fmt.sbprintln(&stdout, err)
+
+		header := (transmute(^netpbm.Header) img.metadata.(^image.PNG_Info))^
+		fmt.sbprintln(&stdout, header.format)
+
+		if header.format in netpbm.PPM {
+			pixels := mem.slice_data_cast([][3]u8, img.pixels.buf[:])
+			for y in 0 ..< img.height {
+				for x in 0 ..< img.width {
+					pix := pixels[y * img.width + x]
+					for p in pix {
+						v := p
+						if v == 1 && header.maxval == 1 {
+							v = 4
+						}
+						fmt.sbprint(&stdout, colours[v])
+					}
+					fmt.sbprint(&stdout, " ")
+				}
+				fmt.sbprintln(&stdout, "")
+			}
 			continue
 		}
-		header := (transmute(^netpbm.Header) imgs[0].metadata.(^image.PNG_Info))^
-		fmt.sbprintln(&stdout, err)
-		for y in 0 ..< imgs[0].height {
-			for x in 0 ..< imgs[0].width {
-				v := imgs[0].pixels.buf[y * imgs[0].width + x]
+
+		for y in 0 ..< img.height {
+			for x in 0 ..< img.width {
+				v := img.pixels.buf[y * img.width + x]
 				if v == 1 && header.maxval == 1 {
 					v = 4
 				}
@@ -37,95 +56,8 @@ main :: proc() {
 		}
 	}
 	fmt.println(strings.to_string(stdout))
-	// fmt.println(imgs)
-	// fmt.println((transmute(^netpbm.Header) imgs[0].metadata.(^image.PNG_Info))^)
-
-	// for t in tests {
-	// 	header, err := netpbm.parse_header(transmute([]byte) t)
-	// 	fmt.println(err, "\n", header, "\n")
-	// }
-
-	// img := generate()
-	// defer bytes.buffer_destroy(&img.pixels)
-	// err := ppm.write(FILE_NAME, img)
-	// if err != .None do fmt.println(err)
-
-	// if len(os.args) == 2 && os.args[1] == "gen" {
-	// 	img1, img2 := generate(), generate()
-	// 	edit_image(&img2)
-	// 	defer {
-	// 		bytes.buffer_destroy(&img1.pixels)
-	// 		bytes.buffer_destroy(&img2.pixels)
-	// 	}
-	// 	err := ppm.write_multiple_to_file(FILE_NAME, []ppm.Image{ img1, img2 })
-	// 	if err != .None {
-	// 		fmt.println(err)
-	// 	}
-	// 	return
-	// }
-
-	// for _ in 0 ..< 1 {
-	// 	imgs, err := ppm.read_from_file(FILE_NAME)
-	// 	defer ppm.destroy(imgs)
-	// 	if err != .None {
-	// 		fmt.println(err)
-	// 		return
-	// 	}
-
-	// 	fmt.println("edit image")
-
-	// 	//edit_image(&imgs[0])
-	// 	imgs[0], imgs[1] = imgs[1], imgs[0]
-
-	// 	fmt.println("save image")
-
-	// 	err = ppm.write_multiple_to_file(FILE_NAME, imgs[:])
-
-	// 	fmt.println("end")
-	// }
 
 	return
-}
-
-TYPE :: u8
-
-edit_image :: proc (
-	img: ^image.Image,
-) {
-	pixel_data := mem.slice_data_cast([][3]TYPE, img.pixels.buf[:])
-	for p in &pixel_data {
-		p.r, p.g, p.b = p.b, p.r, p.g;
-	}
-}
-
-generate :: proc() -> image.Image {
-	WIDTH  :: 200
-	HEIGHT :: 100
-	DEPTH  :: size_of(TYPE)
-
-	img := image.Image{
-		width = WIDTH,
-		height = HEIGHT,
-		channels = 3,
-		depth = DEPTH * 8,
-	}
-
-	resize(&img.pixels.buf, img.width * img.height * img.channels * (DEPTH))
-
-	pixel_data := mem.slice_data_cast([][3]TYPE, img.pixels.buf[:])
-	pixel_index :: proc(img: ^image.Image, x, y: int) -> int {
-		return y * img.width + x
-	}
-
-	for y in 0 ..< img.height {
-		for x in 0 ..< img.width {
-			p := &pixel_data[pixel_index(&img, x, y)]
-			p.r = TYPE(f32(max(TYPE)) * f32(x) / f32(img.width))
-			p.g = TYPE(f32(max(TYPE)) * f32(y) / f32(img.height))
-		}
-	}
-
-	return img
 }
 
 tests := []string{
@@ -157,22 +89,18 @@ tests := []string{
 `P3
 # feep.ppm
 4 4
-15
- 0  0  0    0  0  0    0  0  0   15  0 15
- 0  0  0    0 15  7    0  0  0    0  0  0
- 0  0  0    0  0  0    0 15  7    0  0  0
-15  0 15    0  0  0    0  0  0    0  0  0
+2
+0  0  0    0  0  0    0  0  0    2  0  2
+0  0  0    0  2  1    0  0  0    0  0  0
+0  0  0    0  0  0    0  2  1    0  0  0
+2  0  2    0  0  0    0  0  0    0  0  0
 `,
 
 "P4\n23 5\n\x79\xe7\x9e\x41\x04\x12\x71\xc7\x1e\x41\x04\x10\x41\xe7\x90",
 
 "P5\n22 5\n4\n\x01\x01\x01\x01\x00\x00\x02\x02\x02\x02\x00\x00\x03\x03\x03\x03\x00\x00\x04\x04\x04\x04\x01\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x04\x00\x00\x04\x01\x01\x01\x00\x00\x00\x02\x02\x02\x00\x00\x00\x03\x03\x03\x00\x00\x00\x04\x04\x04\x04\x01\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x04\x00\x00\x00\x01\x00\x00\x00\x00\x00\x02\x02\x02\x02\x00\x00\x03\x03\x03\x03\x00\x00\x04\x00\x00\x00",
 
-`P6
-# feep.ppm
-4 4
-15
-`,
+"P6\n4 4\n15\n\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x02\x00\x00\x00\x00\x02\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x01\x00\x00\x00\x02\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 
 `P7
 WIDTH 227
