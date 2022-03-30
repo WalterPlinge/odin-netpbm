@@ -162,8 +162,7 @@ read_from_buffer :: proc(data: []byte, allocator := context.allocator) -> (img: 
 
 	img_data := data[hdr.total_bytes:]
 
-	img_bytes: int
-	img, img_bytes = decode_image(hdr, img_data) or_return
+	img = decode_image(hdr, img_data) or_return
 
 	//! needs an info struct
 	new_hdr := new(Header)
@@ -440,7 +439,7 @@ _parse_header_pfm :: proc(data: []byte) -> (header: Header, err: Error) {
 
 
 
-decode_image :: proc(header: Header, data: []byte, allocator := context.allocator) -> (img: Image, bytes_decoded: int, err: Error) {
+decode_image :: proc(header: Header, data: []byte, allocator := context.allocator) -> (img: Image, err: Error) {
 	context.allocator = allocator
 
 	img = Image {
@@ -457,11 +456,11 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 		if header.format == .P4 {
 			p4_size := (img.width / 8 + 1) * img.height
 			if len(data) < p4_size {
-				return img, bytes_decoded, .Buffer_Too_Small
+				return img, .Buffer_Too_Small
 			}
 		} else {
 			if len(data) < buffer_size {
-				return img, bytes_decoded, .Buffer_Too_Small
+				return img, .Buffer_Too_Small
 			}
 		}
 	}
@@ -486,7 +485,6 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 					break
 				}
 			}
-			bytes_decoded += 1
 
 			if len(img.pixels.buf) == cap(img.pixels.buf) {
 				break
@@ -496,7 +494,6 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 	// Simple binary
 	case .P5, .P6, .P7, .Pf, .PF:
 		mem.copy(raw_data(img.pixels.buf), raw_data(data), buffer_size)
-		bytes_decoded = buffer_size
 
 		if header.format in PFM {
 			pixels := mem.slice_data_cast([]f32, img.pixels.buf[:])
@@ -526,7 +523,6 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 			case '0', '1':
 				bytes.buffer_write_byte(&img.pixels, c - '0')
 			}
-			bytes_decoded += 1
 
 			if len(img.pixels.buf) == cap(img.pixels.buf) {
 				break
@@ -542,8 +538,6 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 	case .P2, .P3:
 		field_iterator := string(data)
 		for field in strings.fields_iterator(&field_iterator) {
-			bytes_decoded = int(uintptr(raw_data(field_iterator)) - uintptr(raw_data(data)))
-
 			value, ok := strconv.parse_int(field)
 			if !ok {
 				err = .Invalid_Buffer_ASCII_Token
