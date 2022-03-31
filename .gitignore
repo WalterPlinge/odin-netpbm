@@ -2,6 +2,18 @@ ols.json*
 .vscode/
 *.sublime*
 
+# Images
+*.pbm
+*.pgm
+*.ppm
+*.pam
+*.pfm
+
+# Debug
+*.pdb
+
+
+
 # Created by https://www.toptal.com/developers/gitignore/api/vscode,windows,executable,images,visualstudio
 # Edit at https://www.toptal.com/developers/gitignore?templates=vscode,windows,executable,images,visualstudio
 
@@ -479,15 +491,3 @@ MigrationBackup/
 FodyWeavers.xsd
 
 # End of https://www.toptal.com/developers/gitignore/api/vscode,windows,executable,images,visualstudio
-
-
-
-# Images
-*.ppm
-
-# Debug
-*.pdb
-
-# Test
-!test/build.bat
-.vscode/tasks.json
