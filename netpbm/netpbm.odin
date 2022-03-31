@@ -28,9 +28,10 @@
 			[-] header
 				[?] error on duplicate fields (apart from tupltype)
 			[x] raster
-		[x] PFM (Pf, PF)
+		[-] PFM (Pf, PF)
 			[x] header
-			[x] raster
+			[-] raster
+				[?] raster rows are bottom to top, does that matter here?
 	[-] misc. specification
 		[x] comments (PNM headers)
 		[x] maxval
@@ -40,17 +41,17 @@
 			[?] endian conversion or info flag
 		[ ] multiple images
 		[?] Gamma correction, is it necessary?
-	[x] reading
+	[-] reading
 		[x] memory
 		[x] file
 		[?] stream/context
-	[ ] writing
-		[ ] memory
-		[ ] file
+	[-] writing
+		[x] memory
+		[x] file
 		[?] stream/context
 	[x] use allocators
 	[-] proper errors
-	[ ] pass options
+	[-] pass options
 	[!] use core:image.Image.metadata
 */
 package netpbm
@@ -82,6 +83,10 @@ PFM :: Formats{.Pf, .PF}
 ASCII :: Formats{.P1, .P2, .P3}
 BINARY :: Formats{.P4, .P5, .P6} + PAM + PFM
 
+Endian :: enum {
+	Big, Little,
+}
+
 
 
 // P1, P4: width, height
@@ -95,7 +100,7 @@ BINARY :: Formats{.P4, .P5, .P6} + PAM + PFM
 // `depth` is instead to know how many bytes will fit `maxval` (consistent with `core:image`)
 // `scale` and `endianness` are separated, so `scale` will always be positive
 // `endianness` will only be `Little` for a negative `scale` PFM
-// `endianness` does not represent the returned image buffer, that will be native
+// `endianness` only describes the netpbm data, the image buffer will be native
 Header :: struct {
 	format:      Format,
 	width:       int,
@@ -105,7 +110,7 @@ Header :: struct {
 	maxval:      int,
 	tupltype:    string,
 	scale:       f32,
-	endianness:  enum{Big, Little},
+	endianness:  Endian,
 	total_bytes: int,
 }
 
@@ -117,7 +122,6 @@ Error :: enum {
 	Invalid_Signature,
 	Invalid_Header_Token_Character,
 	Incomplete_Header,
-	Invalid_Value,
 	Invalid_Width,
 	Invalid_Height,
 	Invalid_Maxval,
@@ -127,6 +131,21 @@ Error :: enum {
 	Buffer_Too_Small,
 	Invalid_Buffer_ASCII_Token,
 	Invalid_Buffer_Value,
+
+	// writing
+	File_Not_Writable,
+	Invalid_Format,
+	Invalid_Image_Channels,
+	Invalid_Image_Depth,
+}
+
+// This will likely be in core:image
+NetPBM_Info :: struct {
+	format: Format,
+	maxval: int,
+	tupltype: string,
+	scale: f32,
+	endianness: Endian,
 }
 
 
@@ -173,6 +192,158 @@ read_from_buffer :: proc(data: []byte, allocator := context.allocator) -> (img: 
 	img.metadata = transmute(^image.PNG_Info) new_hdr
 
 	return img, Error.None
+}
+
+
+
+write :: proc {
+	write_to_file,
+	write_to_buffer,
+}
+
+write_to_file :: proc(filename: string, img: Image, info: NetPBM_Info, allocator := context.allocator) -> (err: Error) {
+	context.allocator = allocator
+
+	data: []byte; defer delete(data)
+	data = write_to_buffer(img, info) or_return
+
+	if ok := os.write_entire_file(filename, data); !ok {
+		return .File_Not_Writable
+	}
+
+	return Error.None
+}
+
+write_to_buffer :: proc(img: Image, info: NetPBM_Info, allocator := context.allocator) -> (buffer: []byte, err: Error) {
+	context.allocator = allocator
+
+	data: strings.Builder
+	strings.init_builder(&data)
+
+	// all PNM headers start the same
+	fmt.sbprintf(&data, "%s\n", info.format)
+	if info.format in PNM {
+		fmt.sbprintf(&data, "%i %i\n", img.width, img.height)
+		if info.format not_in PBM {
+			fmt.sbprintf(&data, "%i\n", info.maxval)
+		}
+	} else if info.format in PAM {
+		fmt.sbprintf(&data, "WIDTH %i\nHEIGHT %i\nMAXVAL %i\nDEPTH %i\nTUPLTYPE %s\nENDHDR\n",
+			img.width, img.height, info.maxval, img.channels, info.tupltype)
+	} else if info.format in PFM {
+		scale := info.scale if info.endianness == .Big else -info.scale
+		fmt.sbprintf(&data, "%i %i\n%f\n", img.width, img.height, scale)
+	}
+
+	//? should we have checks for everything (PBM needs 1 channel, PPM needs 3 etc)
+	//? or will we leave it the caller's responsibility
+	//? or will we provide a helper function that suggests a format for the image
+
+	switch info.format {
+	// Compressed binary
+	case .P4:
+		pixels := img.pixels.buf[:]
+		for y in 0 ..< img.height {
+			i := y
+			b: byte
+			for x in 0 ..< img.width {
+				i := i * img.width + x
+				bit := byte(7 - (x % 8))
+				v : byte = 0 if pixels[i] == 0 else 1
+				b |= (v << bit)
+
+				if bit == 0 {
+					resize(&data.buf, len(data.buf) + 1)
+					data.buf[len(data.buf) - 1] = b
+					b = 0
+				}
+			}
+
+			if b != 0 {
+				resize(&data.buf, len(data.buf) + 1)
+				data.buf[len(data.buf) - 1] = b
+				b = 0
+			}
+		}
+
+	// Simple binary
+	case .P5, .P6, .P7, .Pf, .PF:
+		header := data.buf[:]
+		pixels := img.pixels.buf[:]
+		resize(&data.buf, len(data.buf) + len(pixels))
+		mem.copy(raw_data(data.buf[len(header):]), raw_data(pixels), len(pixels))
+
+		if img.depth == 2 {
+			pixels := mem.slice_data_cast([]u16be, data.buf[len(header):])
+			for p in &pixels {
+				p = u16be(transmute(u16) p)
+			}
+		} else if info.format in PFM {
+			if info.endianness == .Big {
+				pixels := mem.slice_data_cast([]f32be, data.buf[len(header):])
+				for p in &pixels {
+					p = f32be(transmute(f32) p)
+				}
+			} else {
+				pixels := mem.slice_data_cast([]f32le, data.buf[len(header):])
+				for p in &pixels {
+					p = f32le(transmute(f32) p)
+				}
+			}
+		}
+
+	// If-it-looks-like-a-bitmap ASCII
+	case .P1:
+		pixels := img.pixels.buf[:]
+		for y in 0 ..< img.height {
+			i := y
+			for x in 0 ..< img.width {
+				i := i * img.width + x
+				fmt.sbprintf(&data, "%c", byte('0') if pixels[i] == 0 else byte('1'))
+			}
+			fmt.sbprint(&data, "\n")
+		}
+
+	// Token ASCII
+	case .P2, .P3:
+		switch img.depth {
+		case 1:
+			pixels := img.pixels.buf[:]
+			for y in 0 ..< img.height {
+				i := y
+				for x in 0 ..< img.width {
+					i := i * img.width + x
+					for c in 0 ..< img.channels {
+						i := i * img.channels + c
+						fmt.sbprintf(&data, "%i ", pixels[i])
+					}
+				}
+				fmt.sbprint(&data, "\n")
+			}
+
+		case 2:
+			pixels := mem.slice_data_cast([]u16, img.pixels.buf[:])
+			for y in 0 ..< img.height {
+				i := y
+				for x in 0 ..< img.width {
+					i := i * img.width + x
+					for c in 0 ..< img.channels {
+						i := i * img.channels + c
+						fmt.sbprintf(&data, "%i ", pixels[i])
+					}
+				}
+				fmt.sbprint(&data, "\n")
+			}
+
+		case:
+			return data.buf[:], .Invalid_Image_Depth
+		}
+
+	case:
+		return data.buf[:], .Invalid_Format
+	}
+
+	return data.buf[:], Error.None
 }
 
 

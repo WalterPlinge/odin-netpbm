@@ -15,6 +15,9 @@ FILE_NAME :: "p6.ppm"
 main :: proc() {
 	start := time.now(); defer fmt.eprintln("Time:", time.diff(start, time.now()))
 
+	write_tests()
+	if true do return
+
 	stdout: strings.Builder
 	colours := []rune{'.', '-', '=', '@', '#'}
 
@@ -58,6 +61,252 @@ main :: proc() {
 	fmt.println(strings.to_string(stdout))
 
 	return
+}
+
+write_tests :: proc() {
+	{ // P1
+		img: image.Image
+		img.width = 2
+		img.height = 2
+		img.channels = 1
+		img.depth = 1
+
+		resize(&img.pixels.buf, img.width * img.height)
+		img.pixels.buf[0] = 1
+		img.pixels.buf[1] = 0
+		img.pixels.buf[2] = 0
+		img.pixels.buf[3] = 1
+
+		info: netpbm.NetPBM_Info
+		info.format = .P1
+
+		err := netpbm.write("p1.pbm", img, info)
+		fmt.println("P1", err)
+	}
+
+	{ // P2
+		img: image.Image
+		img.width = 20
+		img.height = 20
+		img.channels = 1
+		img.depth = 1
+
+		resize(&img.pixels.buf, img.width * img.height)
+		for y in 0 ..< img.height {
+			v := f32(y) / f32(img.height)
+			for x in 0 ..< img.width {
+				u := f32(x) / f32(img.width)
+				i := y * img.width + x
+				img.pixels.buf[i] = byte(127.0 * (u + v))
+			}
+		}
+
+		info: netpbm.NetPBM_Info
+		info.format = .P2
+		info.maxval = 255
+
+		err := netpbm.write("p2.pgm", img, info)
+		fmt.println("P2", err)
+	}
+
+	{ // P3
+		img: image.Image
+		img.width = 20
+		img.height = 20
+		img.channels = 3
+		img.depth = 1
+
+		resize(&img.pixels.buf, img.width * img.height * img.channels)
+		pixels := mem.slice_data_cast([][3]u8, img.pixels.buf[:])
+		for y in 0 ..< img.height {
+			v := f32(y) / f32(img.height)
+			for x in 0 ..< img.width {
+				u := f32(x) / f32(img.width)
+				i := y * img.width + x
+				p := &pixels[i]
+				p.r = u8(255.0 * u)
+				p.g = u8(255.0 * v)
+			}
+		}
+
+		info: netpbm.NetPBM_Info
+		info.format = .P3
+		info.maxval = 255
+
+		err := netpbm.write("p3.ppm", img, info)
+		fmt.println("P3", err)
+	}
+
+	{ // P4
+		img: image.Image
+		img.width = 2
+		img.height = 2
+		img.channels = 1
+		img.depth = 1
+
+		resize(&img.pixels.buf, img.width * img.height)
+		img.pixels.buf[0] = 1
+		img.pixels.buf[1] = 0
+		img.pixels.buf[2] = 0
+		img.pixels.buf[3] = 1
+
+		info: netpbm.NetPBM_Info
+		info.format = .P4
+
+		err := netpbm.write("p4.pbm", img, info)
+		fmt.println("P4", err)
+	}
+
+	{ // P5
+		img: image.Image
+		img.width = 20
+		img.height = 20
+		img.channels = 1
+		img.depth = 1
+
+		resize(&img.pixels.buf, img.width * img.height)
+		for y in 0 ..< img.height {
+			v := f32(y) / f32(img.height)
+			for x in 0 ..< img.width {
+				u := f32(x) / f32(img.width)
+				i := y * img.width + x
+				img.pixels.buf[i] = byte(127.0 * (u + v))
+			}
+		}
+
+		info: netpbm.NetPBM_Info
+		info.format = .P5
+		info.maxval = 255
+
+		err := netpbm.write("p5.pgm", img, info)
+		fmt.println("P5", err)
+	}
+
+	{ // P6
+		img: image.Image
+		img.width = 20
+		img.height = 20
+		img.channels = 3
+		img.depth = 1
+
+		resize(&img.pixels.buf, img.width * img.height * img.channels)
+		pixels := mem.slice_data_cast([][3]u8, img.pixels.buf[:])
+		for y in 0 ..< img.height {
+			v := f32(y) / f32(img.height)
+			for x in 0 ..< img.width {
+				u := f32(x) / f32(img.width)
+				i := y * img.width + x
+				p := &pixels[i]
+				p.r = u8(255.0 * u)
+				p.g = u8(255.0 * v)
+			}
+		}
+
+		info: netpbm.NetPBM_Info
+		info.format = .P6
+		info.maxval = 255
+
+		err := netpbm.write("p6.ppm", img, info)
+		fmt.println("P6", err)
+	}
+
+	{ // P7
+		img: image.Image
+		img.width = 20
+		img.height = 20
+		img.channels = 3
+		img.depth = 1
+
+		resize(&img.pixels.buf, img.width * img.height * img.channels)
+		pixels := mem.slice_data_cast([][3]u8, img.pixels.buf[:])
+		for y in 0 ..< img.height {
+			v := f32(y) / f32(img.height)
+			for x in 0 ..< img.width {
+				u := f32(x) / f32(img.width)
+				i := y * img.width + x
+				p := &pixels[i]
+				p.r = u8(255.0 * u)
+				p.g = u8(255.0 * v)
+			}
+		}
+
+		info: netpbm.NetPBM_Info
+		info.format = .P7
+		info.maxval = 255
+		info.tupltype = "RGB"
+
+		err := netpbm.write("p7.pam", img, info)
+		fmt.println("P7", err)
+	}
+
+	{ // P7 to P6
+		img, err := netpbm.read("p7.pam")
+		fmt.println("P7 read", err)
+		info: netpbm.NetPBM_Info
+		info.format = .P6
+		info.maxval = 255
+		err = netpbm.write("p76.ppm", img, info)
+		fmt.println("P76", err)
+	}
+
+	{ // Pf
+		img: image.Image
+		img.width = 20
+		img.height = 20
+		img.channels = 1
+		img.depth = 4
+
+		resize(&img.pixels.buf, img.width * img.height * img.channels * img.depth)
+		pixels := mem.slice_data_cast([]f32, img.pixels.buf[:])
+		for y in 0 ..< img.height {
+			i := y
+			v := f32(y) / f32(img.height)
+			for x in 0 ..< img.width {
+				i := i * img.width + x
+				u := f32(x) / f32(img.width)
+				p := &pixels[i]
+				p^ = (u + v) / 2.0
+			}
+		}
+
+		info: netpbm.NetPBM_Info
+		info.format = .Pf
+		info.scale = 1.0
+		info.endianness = .Little
+
+		err := netpbm.write("pf1.pfm", img, info)
+		fmt.println("Pf", err)
+	}
+
+	{ // PF
+		img: image.Image
+		img.width = 20
+		img.height = 20
+		img.channels = 3
+		img.depth = 4
+
+		resize(&img.pixels.buf, img.width * img.height * img.channels * img.depth)
+		pixels := mem.slice_data_cast([][3]f32, img.pixels.buf[:])
+		for y in 0 ..< img.height {
+			i := y
+			v := f32(y) / f32(img.height)
+			for x in 0 ..< img.width {
+				i := i * img.width + x
+				u := f32(x) / f32(img.width)
+				p := &pixels[i]
+				p.r = u
+				p.g = v
+			}
+		}
+
+		info: netpbm.NetPBM_Info
+		info.format = .PF
+		info.scale = 1.0
+		info.endianness = .Big
+
+		err := netpbm.write("pf3.pfm", img, info)
+		fmt.println("PF", err)
+	}
 }
 
 tests := []string{
