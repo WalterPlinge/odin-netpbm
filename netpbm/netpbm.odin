@@ -268,6 +268,7 @@ write_to_buffer :: proc(img: Image, info: NetPBM_Info, allocator := context.allo
 
 	// Simple binary
 	case .P5, .P6, .P7, .Pf, .PF:
+		//! PFM rows are bottom to top, is that important for us or just the caller
 		header := data.buf[:]
 		pixels := img.pixels.buf[:]
 		resize(&data.buf, len(data.buf) + len(pixels))
@@ -664,6 +665,7 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 
 	// Simple binary
 	case .P5, .P6, .P7, .Pf, .PF:
+		//! PFM rows are bottom to top, is that important for us or just the caller
 		mem.copy(raw_data(img.pixels.buf), raw_data(data), buffer_size)
 
 		if header.format in PFM {
