@@ -24,9 +24,9 @@
 				[x] raster
 					[x] binary
 					[x] ascii
-		[-] PAM (P7)
-			[-] header
-				[?] error on duplicate fields (apart from tupltype)
+		[x] PAM (P7)
+			[x] header
+				[x] error on duplicate fields (apart from tupltype)
 			[x] raster
 		[-] PFM (Pf, PF)
 			[x] header
@@ -114,6 +114,15 @@ Header :: struct {
 	total_bytes: int,
 }
 
+// This will likely be in core:image
+Options :: struct {
+	format: Format,
+	maxval: int,
+	tupltype: string,
+	scale: f32,
+	endianness: Endian,
+}
+
 Error :: enum {
 	None = 0,
 
@@ -122,12 +131,8 @@ Error :: enum {
 	Invalid_Signature,
 	Invalid_Header_Token_Character,
 	Incomplete_Header,
-	Invalid_Width,
-	Invalid_Height,
-	Invalid_Maxval,
-	Invalid_Channels_PAM_Depth,
-	Invalid_Tupltype,
-	Invalid_Scale,
+	Invalid_Header_Value,
+	Duplicate_Header_Field,
 	Buffer_Too_Small,
 	Invalid_Buffer_ASCII_Token,
 	Invalid_Buffer_Value,
@@ -137,15 +142,6 @@ Error :: enum {
 	Invalid_Format,
 	Invalid_Image_Channels,
 	Invalid_Image_Depth,
-}
-
-// This will likely be in core:image
-NetPBM_Info :: struct {
-	format: Format,
-	maxval: int,
-	tupltype: string,
-	scale: f32,
-	endianness: Endian,
 }
 
 
@@ -158,7 +154,7 @@ delete_header :: proc(using header: ^Header) {
 }
 
 
-
+// Reading NetPBM files currently does not support multiple images in binary files
 read :: proc {
 	read_from_file,
 	read_from_buffer,
@@ -201,11 +197,11 @@ write :: proc {
 	write_to_buffer,
 }
 
-write_to_file :: proc(filename: string, img: Image, info: NetPBM_Info, allocator := context.allocator) -> (err: Error) {
+write_to_file :: proc(filename: string, img: Image, options: Options, allocator := context.allocator) -> (err: Error) {
 	context.allocator = allocator
 
 	data: []byte; defer delete(data)
-	data = write_to_buffer(img, info) or_return
+	data = write_to_buffer(img, options) or_return
 
 	if ok := os.write_entire_file(filename, data); !ok {
 		return .File_Not_Writable
@@ -214,24 +210,24 @@ write_to_file :: proc(filename: string, img: Image, info: NetPBM_Info, allocator
 	return Error.None
 }
 
-write_to_buffer :: proc(img: Image, info: NetPBM_Info, allocator := context.allocator) -> (buffer: []byte, err: Error) {
+write_to_buffer :: proc(img: Image, options: Options, allocator := context.allocator) -> (buffer: []byte, err: Error) {
 	context.allocator = allocator
 
 	data: strings.Builder
 	strings.init_builder(&data)
 
 	// all PNM headers start the same
-	fmt.sbprintf(&data, "%s\n", info.format)
-	if info.format in PNM {
+	fmt.sbprintf(&data, "%s\n", options.format)
+	if options.format in PNM {
 		fmt.sbprintf(&data, "%i %i\n", img.width, img.height)
-		if info.format not_in PBM {
-			fmt.sbprintf(&data, "%i\n", info.maxval)
+		if options.format not_in PBM {
+			fmt.sbprintf(&data, "%i\n", options.maxval)
 		}
-	} else if info.format in PAM {
+	} else if options.format in PAM {
 		fmt.sbprintf(&data, "WIDTH %i\nHEIGHT %i\nMAXVAL %i\nDEPTH %i\nTUPLTYPE %s\nENDHDR\n",
-			img.width, img.height, info.maxval, img.channels, info.tupltype)
-	} else if info.format in PFM {
-		scale := info.scale if info.endianness == .Big else -info.scale
+			img.width, img.height, options.maxval, img.channels, options.tupltype)
+	} else if options.format in PFM {
+		scale := options.scale if options.endianness == .Big else -options.scale
 		fmt.sbprintf(&data, "%i %i\n%f\n", img.width, img.height, scale)
 	}
 
@@ -239,7 +235,7 @@ write_to_buffer :: proc(img: Image, info: NetPBM_Info, allocator := context.allo
 	//? or will we leave it the caller's responsibility
 	//? or will we provide a helper function that suggests a format for the image
 
-	switch info.format {
+	switch options.format {
 	// Compressed binary
 	case .P4:
 		pixels := img.pixels.buf[:]
@@ -274,13 +270,14 @@ write_to_buffer :: proc(img: Image, info: NetPBM_Info, allocator := context.allo
 		resize(&data.buf, len(data.buf) + len(pixels))
 		mem.copy(raw_data(data.buf[len(header):]), raw_data(pixels), len(pixels))
 
+		// should we do endian conversion?
 		if img.depth == 2 {
 			pixels := mem.slice_data_cast([]u16be, data.buf[len(header):])
 			for p in &pixels {
 				p = u16be(transmute(u16) p)
 			}
-		} else if info.format in PFM {
-			if info.endianness == .Big {
+		} else if options.format in PFM {
+			if options.endianness == .Big {
 				pixels := mem.slice_data_cast([]f32be, data.buf[len(header):])
 				for p in &pixels {
 					p = f32be(transmute(f32) p)
@@ -445,16 +442,12 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, err: Error) {
 	if current_field < len(header_fields) {
 		return header, .Incomplete_Header
 	}
-	if header.width < 1 {
-		return header, .Invalid_Width
-	}
-	if header.height < 1 {
-		return header, .Invalid_Height
-	}
-	if header.maxval < 1 || header.maxval > int(max(u16)) {
-		return header, .Invalid_Maxval
-	}
 
+	if header.width < 1 \
+	|| header.height < 1 \
+	|| header.maxval < 1 || header.maxval > int(max(u16)) {
+		return header, .Invalid_Header_Value
+	}
 
 	return header, Error.None
 }
@@ -498,24 +491,28 @@ _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (head
 
 		switch field {
 		case "WIDTH":
+			if header.width != 0 do return header, .Duplicate_Header_Field
 			header.width, ok = strconv.parse_int(value)
-			if !ok do return header, .Invalid_Width
+			if !ok do return header, .Invalid_Header_Value
 
 		case "HEIGHT":
+			if header.height != 0 do return header, .Duplicate_Header_Field
 			header.height, ok = strconv.parse_int(value)
-			if !ok do return header, .Invalid_Height
+			if !ok do return header, .Invalid_Header_Value
 
 		case "DEPTH":
+			if header.channels != 0 do return header, .Duplicate_Header_Field
 			header.channels, ok = strconv.parse_int(value)
-			if !ok do return header, .Invalid_Channels_PAM_Depth
+			if !ok do return header, .Invalid_Header_Value
 
 		case "MAXVAL":
+			if header.maxval != 0 do return header, .Duplicate_Header_Field
 			header.maxval, ok = strconv.parse_int(value)
-			if !ok do return header, .Invalid_Maxval
+			if !ok do return header, .Invalid_Header_Value
 
 		case "TUPLTYPE":
 			if len(value) == 0 {
-				return header, .Invalid_Tupltype
+				return header, .Invalid_Header_Value
 			}
 
 			if len(tupltype.buf) == 0 {
@@ -530,17 +527,12 @@ _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (head
 	header.depth = 2 if header.maxval > int(max(u8)) else 1
 
 	// limit checking
-	if header.width < 1 {
-		return header, .Invalid_Width
-	}
-	if header.height < 1 {
-		return header, .Invalid_Height
-	}
-	if header.maxval < 1 {
-		return header, .Invalid_Maxval
-	}
-	if header.depth < 1 {
-		return header, .Invalid_Channels_PAM_Depth
+	if header.width < 1 \
+	|| header.height < 1 \
+	|| header.depth < 1 \
+	|| header.maxval < 1 \
+	|| header.maxval > int(max(u16)) {
+		return header, .Invalid_Header_Value
 	}
 
 	header.tupltype = strings.clone(strings.to_string(tupltype))
@@ -571,21 +563,21 @@ _parse_header_pfm :: proc(data: []byte) -> (header: Header, err: Error) {
 
 	// width
 	field, ok = strings.fields_iterator(&field_iterator)
-	if !ok do return header, .Invalid_Width
+	if !ok do return header, .Incomplete_Header
 	header.width, ok = strconv.parse_int(field)
-	if !ok do return header, .Invalid_Width
+	if !ok do return header, .Invalid_Header_Value
 
 	// height
 	field, ok = strings.fields_iterator(&field_iterator)
-	if !ok do return header, .Invalid_Height
+	if !ok do return header, .Incomplete_Header
 	header.height, ok = strconv.parse_int(field)
-	if !ok do return header, .Invalid_Height
+	if !ok do return header, .Invalid_Header_Value
 
 	// scale (sign is endianness)
 	field, ok = strings.fields_iterator(&field_iterator)
-	if !ok do return header, .Invalid_Scale
+	if !ok do return header, .Incomplete_Header
 	header.scale, ok = strconv.parse_f32(field)
-	if !ok do return header, .Invalid_Scale
+	if !ok do return header, .Invalid_Header_Value
 
 	if header.scale < 0.0 {
 		header.endianness = .Little
@@ -596,14 +588,10 @@ _parse_header_pfm :: proc(data: []byte) -> (header: Header, err: Error) {
 	header.total_bytes = int((uintptr(raw_data(field_iterator)) + 1) - uintptr(raw_data(data)))
 
 	// limit checking
-	if header.width < 1 {
-		return header, .Invalid_Width
-	}
-	if header.height < 1 {
-		return header, .Invalid_Height
-	}
-	if header.scale == 0.0 {
-		return header, .Invalid_Scale
+	if header.width < 1 \
+	|| header.height < 1 \
+	|| header.scale == 0.0 {
+		return header, .Invalid_Header_Value
 	}
 
 	return header, Error.None
@@ -668,6 +656,7 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 		//! PFM rows are bottom to top, is that important for us or just the caller
 		mem.copy(raw_data(img.pixels.buf), raw_data(data), buffer_size)
 
+		//? Again, do we want endian conversion
 		if header.format in PFM {
 			pixels := mem.slice_data_cast([]f32, img.pixels.buf[:])
 			if header.endianness == .Little {

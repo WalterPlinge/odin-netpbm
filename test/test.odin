@@ -77,7 +77,7 @@ write_tests :: proc() {
 		img.pixels.buf[2] = 0
 		img.pixels.buf[3] = 1
 
-		info: netpbm.NetPBM_Info
+		info: netpbm.Options
 		info.format = .P1
 
 		err := netpbm.write("p1.pbm", img, info)
@@ -101,7 +101,7 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.NetPBM_Info
+		info: netpbm.Options
 		info.format = .P2
 		info.maxval = 255
 
@@ -129,7 +129,7 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.NetPBM_Info
+		info: netpbm.Options
 		info.format = .P3
 		info.maxval = 255
 
@@ -150,7 +150,7 @@ write_tests :: proc() {
 		img.pixels.buf[2] = 0
 		img.pixels.buf[3] = 1
 
-		info: netpbm.NetPBM_Info
+		info: netpbm.Options
 		info.format = .P4
 
 		err := netpbm.write("p4.pbm", img, info)
@@ -174,7 +174,7 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.NetPBM_Info
+		info: netpbm.Options
 		info.format = .P5
 		info.maxval = 255
 
@@ -202,7 +202,7 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.NetPBM_Info
+		info: netpbm.Options
 		info.format = .P6
 		info.maxval = 255
 
@@ -230,7 +230,7 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.NetPBM_Info
+		info: netpbm.Options
 		info.format = .P7
 		info.maxval = 255
 		info.tupltype = "RGB"
@@ -242,7 +242,7 @@ write_tests :: proc() {
 	{ // P7 to P6
 		img, err := netpbm.read("p7.pam")
 		fmt.println("P7 read", err)
-		info: netpbm.NetPBM_Info
+		info: netpbm.Options
 		info.format = .P6
 		info.maxval = 255
 		err = netpbm.write("p76.ppm", img, info)
@@ -269,7 +269,7 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.NetPBM_Info
+		info: netpbm.Options
 		info.format = .Pf
 		info.scale = 1.0
 		info.endianness = .Little
@@ -299,7 +299,7 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.NetPBM_Info
+		info: netpbm.Options
 		info.format = .PF
 		info.scale = 1.0
 		info.endianness = .Big
