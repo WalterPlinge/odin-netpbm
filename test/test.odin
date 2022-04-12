@@ -77,10 +77,11 @@ write_tests :: proc() {
 		img.pixels.buf[2] = 0
 		img.pixels.buf[3] = 1
 
-		info: netpbm.Options
+		info: netpbm.Header
+		netpbm.TMP_SET_METADATA(&img, &info)
 		info.format = .P1
 
-		err := netpbm.write("p1.pbm", img, info)
+		err := netpbm.write("p1.pbm", img)
 		fmt.println("P1", err)
 	}
 
@@ -101,11 +102,12 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Options
+		info: netpbm.Header
+		netpbm.TMP_SET_METADATA(&img, &info)
 		info.format = .P2
 		info.maxval = 255
 
-		err := netpbm.write("p2.pgm", img, info)
+		err := netpbm.write("p2.pgm", img)
 		fmt.println("P2", err)
 	}
 
@@ -129,11 +131,12 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Options
+		info: netpbm.Header
+		netpbm.TMP_SET_METADATA(&img, &info)
 		info.format = .P3
 		info.maxval = 255
 
-		err := netpbm.write("p3.ppm", img, info)
+		err := netpbm.write("p3.ppm", img)
 		fmt.println("P3", err)
 	}
 
@@ -150,10 +153,11 @@ write_tests :: proc() {
 		img.pixels.buf[2] = 0
 		img.pixels.buf[3] = 1
 
-		info: netpbm.Options
+		info: netpbm.Header
+		netpbm.TMP_SET_METADATA(&img, &info)
 		info.format = .P4
 
-		err := netpbm.write("p4.pbm", img, info)
+		err := netpbm.write("p4.pbm", img)
 		fmt.println("P4", err)
 	}
 
@@ -174,11 +178,12 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Options
+		info: netpbm.Header
+		netpbm.TMP_SET_METADATA(&img, &info)
 		info.format = .P5
 		info.maxval = 255
 
-		err := netpbm.write("p5.pgm", img, info)
+		err := netpbm.write("p5.pgm", img)
 		fmt.println("P5", err)
 	}
 
@@ -202,11 +207,12 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Options
+		info: netpbm.Header
+		netpbm.TMP_SET_METADATA(&img, &info)
 		info.format = .P6
 		info.maxval = 255
 
-		err := netpbm.write("p6.ppm", img, info)
+		err := netpbm.write("p6.ppm", img)
 		fmt.println("P6", err)
 	}
 
@@ -230,22 +236,24 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Options
+		info: netpbm.Header
+		netpbm.TMP_SET_METADATA(&img, &info)
 		info.format = .P7
 		info.maxval = 255
 		info.tupltype = "RGB"
 
-		err := netpbm.write("p7.pam", img, info)
+		err := netpbm.write("p7.pam", img)
 		fmt.println("P7", err)
 	}
 
 	{ // P7 to P6
 		img, err := netpbm.read("p7.pam")
 		fmt.println("P7 read", err)
-		info: netpbm.Options
+		info: netpbm.Header
+		netpbm.TMP_SET_METADATA(&img, &info)
 		info.format = .P6
 		info.maxval = 255
-		err = netpbm.write("p76.ppm", img, info)
+		err = netpbm.write("p76.ppm", img)
 		fmt.println("P76", err)
 	}
 
@@ -269,12 +277,13 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Options
+		info: netpbm.Header
+		netpbm.TMP_SET_METADATA(&img, &info)
 		info.format = .Pf
 		info.scale = 1.0
 		info.endianness = .Little
 
-		err := netpbm.write("pf1.pfm", img, info)
+		err := netpbm.write("pf1.pfm", img)
 		fmt.println("Pf", err)
 	}
 
@@ -299,12 +308,13 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Options
+		info: netpbm.Header
+		netpbm.TMP_SET_METADATA(&img, &info)
 		info.format = .PF
 		info.scale = 1.0
 		info.endianness = .Big
 
-		err := netpbm.write("pf3.pfm", img, info)
+		err := netpbm.write("pf3.pfm", img)
 		fmt.println("PF", err)
 	}
 }
