@@ -22,10 +22,10 @@ main :: proc() {
 	colours := []rune{'.', '-', '=', '@', '#'}
 
 	for t in ([]int{0, 3, 1, 4, 2, 5}) {
-		img, err := netpbm.read_from_buffer(transmute([]byte) tests[t]); defer netpbm.destroy_image(&img)
+		img, err := netpbm.read_from_buffer(transmute([]byte) tests[t]); defer netpbm.destroy(&img)
 		fmt.sbprintln(&stdout, err)
 
-		header := (transmute(^netpbm.Header) img.metadata.(^image.PNG_Info))^
+		header := (cast(^netpbm.Info) img.metadata.(^image.PNG_Info)).header
 		fmt.sbprintln(&stdout, header.format)
 
 		if header.format in netpbm.PPM {
@@ -77,9 +77,9 @@ write_tests :: proc() {
 		img.pixels.buf[2] = 0
 		img.pixels.buf[3] = 1
 
-		info: netpbm.Header
-		netpbm.TMP_SET_METADATA(&img, &info)
-		info.format = .P1
+		info: netpbm.Info
+		img.metadata = cast(^image.PNG_Info) &info
+		info.header.format = .P1
 
 		err := netpbm.write("p1.pbm", img)
 		fmt.println("P1", err)
@@ -102,10 +102,10 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Header
-		netpbm.TMP_SET_METADATA(&img, &info)
-		info.format = .P2
-		info.maxval = 255
+		info: netpbm.Info
+		img.metadata = cast(^image.PNG_Info) &info
+		info.header.format = .P2
+		info.header.maxval = 255
 
 		err := netpbm.write("p2.pgm", img)
 		fmt.println("P2", err)
@@ -131,10 +131,10 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Header
-		netpbm.TMP_SET_METADATA(&img, &info)
-		info.format = .P3
-		info.maxval = 255
+		info: netpbm.Info
+		img.metadata = cast(^image.PNG_Info) &info
+		info.header.format = .P3
+		info.header.maxval = 255
 
 		err := netpbm.write("p3.ppm", img)
 		fmt.println("P3", err)
@@ -153,9 +153,9 @@ write_tests :: proc() {
 		img.pixels.buf[2] = 0
 		img.pixels.buf[3] = 1
 
-		info: netpbm.Header
-		netpbm.TMP_SET_METADATA(&img, &info)
-		info.format = .P4
+		info: netpbm.Info
+		img.metadata = cast(^image.PNG_Info) &info
+		info.header.format = .P4
 
 		err := netpbm.write("p4.pbm", img)
 		fmt.println("P4", err)
@@ -178,10 +178,10 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Header
-		netpbm.TMP_SET_METADATA(&img, &info)
-		info.format = .P5
-		info.maxval = 255
+		info: netpbm.Info
+		img.metadata = cast(^image.PNG_Info) &info
+		info.header.format = .P5
+		info.header.maxval = 255
 
 		err := netpbm.write("p5.pgm", img)
 		fmt.println("P5", err)
@@ -207,10 +207,10 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Header
-		netpbm.TMP_SET_METADATA(&img, &info)
-		info.format = .P6
-		info.maxval = 255
+		info: netpbm.Info
+		img.metadata = cast(^image.PNG_Info) &info
+		info.header.format = .P6
+		info.header.maxval = 255
 
 		err := netpbm.write("p6.ppm", img)
 		fmt.println("P6", err)
@@ -236,11 +236,11 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Header
-		netpbm.TMP_SET_METADATA(&img, &info)
-		info.format = .P7
-		info.maxval = 255
-		info.tupltype = "RGB"
+		info: netpbm.Info
+		img.metadata = cast(^image.PNG_Info) &info
+		info.header.format = .P7
+		info.header.maxval = 255
+		info.header.tupltype = "RGB"
 
 		err := netpbm.write("p7.pam", img)
 		fmt.println("P7", err)
@@ -249,10 +249,10 @@ write_tests :: proc() {
 	{ // P7 to P6
 		img, err := netpbm.read("p7.pam")
 		fmt.println("P7 read", err)
-		info: netpbm.Header
-		netpbm.TMP_SET_METADATA(&img, &info)
-		info.format = .P6
-		info.maxval = 255
+		info: netpbm.Info
+		img.metadata = cast(^image.PNG_Info) &info
+		info.header.format = .P6
+		info.header.maxval = 255
 		err = netpbm.write("p76.ppm", img)
 		fmt.println("P76", err)
 	}
@@ -277,11 +277,11 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Header
-		netpbm.TMP_SET_METADATA(&img, &info)
-		info.format = .Pf
-		info.scale = 1.0
-		info.endianness = .Little
+		info: netpbm.Info
+		img.metadata = cast(^image.PNG_Info) &info
+		info.header.format = .Pf
+		info.header.scale = 1.0
+		info.header.endian = .Little
 
 		err := netpbm.write("pf1.pfm", img)
 		fmt.println("Pf", err)
@@ -308,11 +308,11 @@ write_tests :: proc() {
 			}
 		}
 
-		info: netpbm.Header
-		netpbm.TMP_SET_METADATA(&img, &info)
-		info.format = .PF
-		info.scale = 1.0
-		info.endianness = .Big
+		info: netpbm.Info
+		img.metadata = cast(^image.PNG_Info) &info
+		info.header.format = .PF
+		info.header.scale = 1.0
+		info.header.endian = .Big
 
 		err := netpbm.write("pf3.pfm", img)
 		fmt.println("PF", err)

@@ -46,9 +46,9 @@
 		[x] file
 		[ ] stream/context
 	[x] use allocators
-	[-] proper errors
+	[x] proper errors
 	[-] pass options
-	[!] use core:image.Image.metadata
+	[-] use core:image.Image.metadata
 */
 
 /*
@@ -72,46 +72,27 @@ import "core:unicode"
 
 
 
+// Format, Header, Info and Error will go in `core:image/common.odin`
 Image :: image.Image
 
 Format :: enum {
 	P1, P2, P3, P4, P5, P6, P7, Pf, PF,
 }
 
-Formats :: bit_set[Format]
-PBM :: Formats{.P1, .P4}
-PGM :: Formats{.P2, .P5}
-PPM :: Formats{.P3, .P6}
-PNM :: PBM + PGM + PPM
-PAM :: Formats{.P7}
-PFM :: Formats{.Pf, .PF}
-ASCII :: Formats{.P1, .P2, .P3}
-BINARY :: Formats{.P4, .P5, .P6} + PAM + PFM
-
-
-
-// P1, P4: width, height
-// P2, P5: width, height, maxval
-// P3, P6: width, height, maxval
-// P7    : width, height, maxval, depth (channels), tupltype
-// Pf, PF: width, height, scale+endian
-
-// Some aesthetic differences from the specifications:
-// `channels` is for the PAM specification `depth`
-// `depth` is instead to know how many bytes will fit `maxval` (consistent with `core:image`)
-// `scale` and `endianness` are separated, so `scale` will always be positive
-// `endianness` will only be `Little` for a negative `scale` PFM
-// `endianness` only describes the netpbm data, the image buffer will be native
 Header :: struct {
-	format:     Format,
-	width:      int,
-	height:     int,
-	channels:   int,
-	depth:      int,
-	maxval:     int,
-	tupltype:   string,
-	scale:      f32,
-	endianness: enum{ Big, Little },
+	format:   Format,
+	width:    int,
+	height:   int,
+	channels: int,
+	depth:    int,
+	maxval:   int,
+	tupltype: string,
+	scale:    f32,
+	endian:   enum{ Big, Little },
+}
+
+Info :: struct {
+	header: Header,
 }
 
 Error :: enum {
@@ -131,17 +112,22 @@ Error :: enum {
 	// writing
 	File_Not_Writable,
 	Invalid_Format,
+	Invalid_Number_Of_Channels,
 	Invalid_Image_Depth,
 }
 
 
 
-delete_header :: proc(using header: ^Header) {
-	if format == .P7 {
-		delete(tupltype)
-		tupltype = ""
-	}
-}
+Formats :: bit_set[Format]
+PBM :: Formats{.P1, .P4}
+PGM :: Formats{.P2, .P5}
+PPM :: Formats{.P3, .P6}
+PNM :: PBM + PGM + PPM
+PAM :: Formats{.P7}
+PFM :: Formats{.Pf, .PF}
+ASCII :: Formats{.P1, .P2, .P3}
+BINARY :: Formats{.P4, .P5, .P6} + PAM + PFM
+
 
 
 // Reading NetPBM files currently does not support multiple images in binary files
@@ -165,20 +151,20 @@ read_from_file :: proc(filename: string, allocator := context.allocator) -> (img
 read_from_buffer :: proc(data: []byte, allocator := context.allocator) -> (img: Image, err: Error) {
 	context.allocator = allocator
 
-	hdr: Header; defer delete_header(&hdr)
-	hdr_size: int
-	hdr, hdr_size = parse_header(data) or_return
+	header: Header; defer header_destroy(&header)
+	header_size: int
+	header, header_size = parse_header(data) or_return
 
-	img_data := data[hdr_size:]
-	img = decode_image(hdr, img_data) or_return
+	img_data := data[header_size:]
+	img = decode_image(header, img_data) or_return
 
-	//! needs an info struct
-	new_hdr := new(Header)
-	new_hdr^ = hdr
-	if hdr.tupltype != "" {
-		new_hdr.tupltype = strings.clone(hdr.tupltype)
+	info := new(Info)
+	info.header = header
+	if header.tupltype != "" {
+		info.header.tupltype = strings.clone(header.tupltype)
 	}
-	img.metadata = cast(^image.PNG_Info) new_hdr
+	//! TEMP CAST
+	img.metadata = cast(^image.PNG_Info) info
 
 	return img, Error.None
 }
@@ -206,29 +192,52 @@ write_to_file :: proc(filename: string, img: Image, allocator := context.allocat
 write_to_buffer :: proc(img: Image, allocator := context.allocator) -> (buffer: []byte, err: Error) {
 	context.allocator = allocator
 
-	hdr := cast(^Header) img.metadata.(^image.PNG_Info)
+	//! TEMP CAST
+	info := cast(^Info) img.metadata.(^image.PNG_Info)
+	using info
 
+	//? validation
+	if header.format in (PBM + PGM + Formats{.Pf}) && img.channels != 1 \
+	|| header.format in (PPM + Formats{.PF}) && img.channels != 3 {
+		err = .Invalid_Number_Of_Channels
+		return
+	}
+
+	if header.format in (PNM + PAM) {
+		if header.maxval <= int(max(u8)) && img.depth != 1 \
+		|| header.maxval > int(max(u8)) && header.maxval <= int(max(u16)) && img.depth != 2 {
+			err = .Invalid_Image_Depth
+			return
+		}
+	} else if header.format in PFM && img.depth != 4 {
+		err = .Invalid_Image_Depth
+		return
+	}
+
+	// we will write to a string builder
 	data: strings.Builder
 	strings.init_builder(&data)
 
 	// all PNM headers start with the format
-	fmt.sbprintf(&data, "%s\n", hdr.format)
-	if hdr.format in PNM {
+	fmt.sbprintf(&data, "%s\n", header.format)
+	if header.format in PNM {
 		fmt.sbprintf(&data, "%i %i\n", img.width, img.height)
-		if hdr.format not_in PBM {
-			fmt.sbprintf(&data, "%i\n", hdr.maxval)
+		if header.format not_in PBM {
+			fmt.sbprintf(&data, "%i\n", header.maxval)
 		}
-	} else if hdr.format in PAM {
+	} else if header.format in PAM {
 		fmt.sbprintf(&data, "WIDTH %i\nHEIGHT %i\nMAXVAL %i\nDEPTH %i\nTUPLTYPE %s\nENDHDR\n",
-			img.width, img.height, hdr.maxval, img.channels, hdr.tupltype)
-	} else if hdr.format in PFM {
-		scale := hdr.scale if hdr.endianness == .Big else -hdr.scale
+			img.width, img.height, header.maxval, img.channels, header.tupltype)
+	} else if header.format in PFM {
+		scale := -header.scale if header.endian == .Little else header.scale
 		fmt.sbprintf(&data, "%i %i\n%f\n", img.width, img.height, scale)
 	}
 
-	switch hdr.format {
+	switch header.format {
 	// Compressed binary
 	case .P4:
+		header_buf := data.buf[:]
+		reserve(&data.buf, len(header_buf) + (img.width / 8 + 1) * img.height)
 		pixels := img.pixels.buf[:]
 		for y in 0 ..< img.height {
 			i := y
@@ -240,40 +249,38 @@ write_to_buffer :: proc(img: Image, allocator := context.allocator) -> (buffer: 
 				b |= (v << bit)
 
 				if bit == 0 {
-					resize(&data.buf, len(data.buf) + 1)
-					data.buf[len(data.buf) - 1] = b
+					append(&data.buf, b)
 					b = 0
 				}
 			}
 
 			if b != 0 {
-				resize(&data.buf, len(data.buf) + 1)
-				data.buf[len(data.buf) - 1] = b
+				append(&data.buf, b)
 				b = 0
 			}
 		}
 
 	// Simple binary
 	case .P5, .P6, .P7, .Pf, .PF:
-		header := data.buf[:]
+		header_buf := data.buf[:]
 		pixels := img.pixels.buf[:]
-		resize(&data.buf, len(data.buf) + len(pixels))
-		mem.copy(raw_data(data.buf[len(header):]), raw_data(pixels), len(pixels))
+		resize(&data.buf, len(header_buf) + len(pixels))
+		mem.copy(raw_data(data.buf[len(header_buf):]), raw_data(pixels), len(pixels))
 
 		// convert from native endianness
 		if img.depth == 2 {
-			pixels := mem.slice_data_cast([]u16be, data.buf[len(header):])
+			pixels := mem.slice_data_cast([]u16be, data.buf[len(header_buf):])
 			for p in &pixels {
 				p = u16be(transmute(u16) p)
 			}
-		} else if hdr.format in PFM {
-			if hdr.endianness == .Big {
-				pixels := mem.slice_data_cast([]f32be, data.buf[len(header):])
+		} else if header.format in PFM {
+			if header.endian == .Big {
+				pixels := mem.slice_data_cast([]f32be, data.buf[len(header_buf):])
 				for p in &pixels {
 					p = f32be(transmute(f32) p)
 				}
 			} else {
-				pixels := mem.slice_data_cast([]f32le, data.buf[len(header):])
+				pixels := mem.slice_data_cast([]f32le, data.buf[len(header_buf):])
 				for p in &pixels {
 					p = f32le(transmute(f32) p)
 				}
@@ -305,6 +312,7 @@ write_to_buffer :: proc(img: Image, allocator := context.allocator) -> (buffer: 
 						i := i * img.channels + c
 						fmt.sbprintf(&data, "%i ", pixels[i])
 					}
+					fmt.sbprint(&data, "\n")
 				}
 				fmt.sbprint(&data, "\n")
 			}
@@ -319,6 +327,7 @@ write_to_buffer :: proc(img: Image, allocator := context.allocator) -> (buffer: 
 						i := i * img.channels + c
 						fmt.sbprintf(&data, "%i ", pixels[i])
 					}
+					fmt.sbprint(&data, "\n")
 				}
 				fmt.sbprint(&data, "\n")
 			}
@@ -336,7 +345,7 @@ write_to_buffer :: proc(img: Image, allocator := context.allocator) -> (buffer: 
 
 
 
-parse_header :: proc(data: []byte, allocator := context.allocator) -> (hdr: Header, length: int, err: Error) {
+parse_header :: proc(data: []byte, allocator := context.allocator) -> (header: Header, length: int, err: Error) {
 	context.allocator = allocator
 
 	// we need the signature and a space
@@ -361,21 +370,21 @@ parse_header :: proc(data: []byte, allocator := context.allocator) -> (hdr: Head
 }
 
 @(private)
-_parse_header_pnm :: proc(data: []byte) -> (hdr: Header, length: int, err: Error) {
+_parse_header_pnm :: proc(data: []byte) -> (header: Header, length: int, err: Error) {
 	SIG_LENGTH :: 2
 
 	{
 		header_formats := []Format{.P1, .P2, .P3, .P4, .P5, .P6}
-		hdr.format = header_formats[data[1] - '0' - 1]
+		header.format = header_formats[data[1] - '0' - 1]
 	}
 
 	// have a list of fielda for easy iteration
 	header_fields: []^int
-	if hdr.format in PBM {
-		header_fields = {&hdr.width, &hdr.height}
-		hdr.maxval = 1 // we know maxval for a bitmap
+	if header.format in PBM {
+		header_fields = {&header.width, &header.height}
+		header.maxval = 1 // we know maxval for a bitmap
 	} else {
-		header_fields = {&hdr.width, &hdr.height, &hdr.maxval}
+		header_fields = {&header.width, &header.height, &header.maxval}
 	}
 
 	// loop state
@@ -431,8 +440,8 @@ _parse_header_pnm :: proc(data: []byte) -> (hdr: Header, length: int, err: Error
 	}
 
 	// set extra info
-	hdr.channels = 3 if hdr.format in PPM else 1
-	hdr.depth = 2 if hdr.maxval > int(max(u8)) else 1
+	header.channels = 3 if header.format in PPM else 1
+	header.depth = 2 if header.maxval > int(max(u8)) else 1
 
 	// limit checking
 	if current_field < len(header_fields) {
@@ -440,9 +449,9 @@ _parse_header_pnm :: proc(data: []byte) -> (hdr: Header, length: int, err: Error
 		return
 	}
 
-	if hdr.width < 1 \
-	|| hdr.height < 1 \
-	|| hdr.maxval < 1 || hdr.maxval > int(max(u16)) {
+	if header.width < 1 \
+	|| header.height < 1 \
+	|| header.maxval < 1 || header.maxval > int(max(u16)) {
 		err = .Invalid_Header_Value
 		return
 	}
@@ -451,7 +460,7 @@ _parse_header_pnm :: proc(data: []byte) -> (hdr: Header, length: int, err: Error
 }
 
 @(private)
-_parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (hdr: Header, length: int, err: Error) {
+_parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (header: Header, length: int, err: Error) {
 	context.allocator = allocator
 
 	// the spec needs the newline
@@ -459,7 +468,7 @@ _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (hdr:
 		err = .Invalid_Signature
 		return
 	}
-	hdr.format = .P7
+	header.format = .P7
 
 	SIGNATURE_LENGTH :: 3
 	HEADER_END :: "ENDHDR\n"
@@ -493,10 +502,10 @@ _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (hdr:
 		current_field: ^int
 
 		switch field {
-		case "WIDTH":  current_field = &hdr.width
-		case "HEIGHT": current_field = &hdr.height
-		case "DEPTH":  current_field = &hdr.channels
-		case "MAXVAL": current_field = &hdr.maxval
+		case "WIDTH":  current_field = &header.width
+		case "HEIGHT": current_field = &header.height
+		case "DEPTH":  current_field = &header.channels
+		case "MAXVAL": current_field = &header.maxval
 
 		case "TUPLTYPE":
 			if len(value) == 0 {
@@ -528,42 +537,42 @@ _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (hdr:
 	}
 
 	// extra info
-	hdr.depth = 2 if hdr.maxval > int(max(u8)) else 1
+	header.depth = 2 if header.maxval > int(max(u8)) else 1
 
 	// limit checking
-	if hdr.width < 1 \
-	|| hdr.height < 1 \
-	|| hdr.depth < 1 \
-	|| hdr.maxval < 1 \
-	|| hdr.maxval > int(max(u16)) {
+	if header.width < 1 \
+	|| header.height < 1 \
+	|| header.depth < 1 \
+	|| header.maxval < 1 \
+	|| header.maxval > int(max(u16)) {
 		err = .Invalid_Header_Value
 		return
 	}
 
-	hdr.tupltype = strings.clone(strings.to_string(tupltype))
+	header.tupltype = strings.clone(strings.to_string(tupltype))
 	return
 }
 
 @(private)
-_parse_header_pfm :: proc(data: []byte) -> (hdr: Header, length: int, err: Error) {
+_parse_header_pfm :: proc(data: []byte) -> (header: Header, length: int, err: Error) {
 	// we can just cycle through tokens for PFM
 	field_iterator := string(data)
 	field, ok := strings.fields_iterator(&field_iterator)
 
 	switch field {
 	case "Pf":
-		hdr.format = .Pf
-		hdr.channels = 1
+		header.format = .Pf
+		header.channels = 1
 	case "PF":
-		hdr.format = .PF
-		hdr.channels = 3
+		header.format = .PF
+		header.channels = 3
 	case:
 		err = .Invalid_Signature
 		return
 	}
 
 	// floating point
-	hdr.depth = 4
+	header.depth = 4
 
 	// width
 	field, ok = strings.fields_iterator(&field_iterator)
@@ -571,7 +580,7 @@ _parse_header_pfm :: proc(data: []byte) -> (hdr: Header, length: int, err: Error
 		err = .Incomplete_Header
 		return
 	}
-	hdr.width, ok = strconv.parse_int(field)
+	header.width, ok = strconv.parse_int(field)
 	if !ok {
 		err = .Invalid_Header_Value
 		return
@@ -583,7 +592,7 @@ _parse_header_pfm :: proc(data: []byte) -> (hdr: Header, length: int, err: Error
 		err = .Incomplete_Header
 		return
 	}
-	hdr.height, ok = strconv.parse_int(field)
+	header.height, ok = strconv.parse_int(field)
 	if !ok {
 		err = .Invalid_Header_Value
 		return
@@ -595,24 +604,24 @@ _parse_header_pfm :: proc(data: []byte) -> (hdr: Header, length: int, err: Error
 		err = .Incomplete_Header
 		return
 	}
-	hdr.scale, ok = strconv.parse_f32(field)
+	header.scale, ok = strconv.parse_f32(field)
 	if !ok {
 		err = .Invalid_Header_Value
 		return
 	}
 
-	if hdr.scale < 0.0 {
-		hdr.endianness = .Little
-		hdr.scale = -hdr.scale
+	if header.scale < 0.0 {
+		header.endian = .Little
+		header.scale = -header.scale
 	}
 
 	// pointer math to get header size
 	length = int((uintptr(raw_data(field_iterator)) + 1) - uintptr(raw_data(data)))
 
 	// limit checking
-	if hdr.width < 1 \
-	|| hdr.height < 1 \
-	|| hdr.scale == 0.0 {
+	if header.width < 1 \
+	|| header.height < 1 \
+	|| header.scale == 0.0 {
 		err = .Invalid_Header_Value
 		return
 	}
@@ -681,7 +690,7 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 		// convert to native endianness
 		if header.format in PFM {
 			pixels := mem.slice_data_cast([]f32, img.pixels.buf[:])
-			if header.endianness == .Little {
+			if header.endian == .Little {
 				for p in &pixels {
 					p = f32(transmute(f32le) p)
 				}
@@ -753,13 +762,4 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 	}
 
 	return
-}
-
-
-
-destroy_image :: proc(img: ^Image) {
-	bytes.buffer_destroy(&img.pixels)
-	header := transmute(^Header) img.metadata.(^image.PNG_Info)
-	delete_header(header)
-	free(header)
 }
