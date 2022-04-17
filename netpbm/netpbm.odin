@@ -160,7 +160,7 @@ read_from_buffer :: proc(data: []byte, allocator := context.allocator) -> (img: 
 
 	info := new(Info)
 	info.header = header
-	if header.tupltype != "" {
+	if header.format == .P7 && header.tupltype != "" {
 		info.header.tupltype = strings.clone(header.tupltype)
 	}
 	//! TEMP CAST
@@ -194,6 +194,7 @@ write_to_buffer :: proc(img: Image, allocator := context.allocator) -> (buffer: 
 
 	//! TEMP CAST
 	info := cast(^Info) img.metadata.(^image.PNG_Info)
+	// using info so we can just talk about the header
 	using info
 
 	//? validation
@@ -237,13 +238,18 @@ write_to_buffer :: proc(img: Image, allocator := context.allocator) -> (buffer: 
 	// Compressed binary
 	case .P4:
 		header_buf := data.buf[:]
-		reserve(&data.buf, len(header_buf) + (img.width / 8 + 1) * img.height)
 		pixels := img.pixels.buf[:]
+
+		p4_buffer_size := (img.width / 8 + 1) * img.height
+		reserve(&data.buf, len(header_buf) + p4_buffer_size)
+
+		// we build up a byte value until it is completely filled
+		// or we reach the end the row
 		for y in 0 ..< img.height {
-			i := y
 			b: byte
+
 			for x in 0 ..< img.width {
-				i := i * img.width + x
+				i := y * img.width + x
 				bit := byte(7 - (x % 8))
 				v : byte = 0 if pixels[i] == 0 else 1
 				b |= (v << bit)
@@ -264,6 +270,7 @@ write_to_buffer :: proc(img: Image, allocator := context.allocator) -> (buffer: 
 	case .P5, .P6, .P7, .Pf, .PF:
 		header_buf := data.buf[:]
 		pixels := img.pixels.buf[:]
+
 		resize(&data.buf, len(header_buf) + len(pixels))
 		mem.copy(raw_data(data.buf[len(header_buf):]), raw_data(pixels), len(pixels))
 
@@ -291,12 +298,11 @@ write_to_buffer :: proc(img: Image, allocator := context.allocator) -> (buffer: 
 	case .P1:
 		pixels := img.pixels.buf[:]
 		for y in 0 ..< img.height {
-			i := y
 			for x in 0 ..< img.width {
-				i := i * img.width + x
-				fmt.sbprintf(&data, "%c", byte('0') if pixels[i] == 0 else byte('1'))
+				i := y * img.width + x
+				append(&data.buf, '0' if pixels[i] == 0 else '1')
 			}
-			fmt.sbprint(&data, "\n")
+			append(&data.buf, '\n')
 		}
 
 	// Token ASCII
@@ -305,9 +311,8 @@ write_to_buffer :: proc(img: Image, allocator := context.allocator) -> (buffer: 
 		case 1:
 			pixels := img.pixels.buf[:]
 			for y in 0 ..< img.height {
-				i := y
 				for x in 0 ..< img.width {
-					i := i * img.width + x
+					i := y * img.width + x
 					for c in 0 ..< img.channels {
 						i := i * img.channels + c
 						fmt.sbprintf(&data, "%i ", pixels[i])
@@ -320,9 +325,8 @@ write_to_buffer :: proc(img: Image, allocator := context.allocator) -> (buffer: 
 		case 2:
 			pixels := mem.slice_data_cast([]u16, img.pixels.buf[:])
 			for y in 0 ..< img.height {
-				i := y
 				for x in 0 ..< img.width {
-					i := i * img.width + x
+					i := y * img.width + x
 					for c in 0 ..< img.channels {
 						i := i * img.channels + c
 						fmt.sbprintf(&data, "%i ", pixels[i])
@@ -387,12 +391,14 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, length: int, err: Er
 		header_fields = {&header.width, &header.height, &header.maxval}
 	}
 
+	// we're keeping track of the header byte length
+	length = SIG_LENGTH
+
 	// loop state
 	in_comment := false
 	already_in_space := true
 	current_field := 0
 	current_value := header_fields[0]
-	length = SIG_LENGTH
 
 	parse_loop: for d, i in data[SIG_LENGTH:] {
 		length += 1
@@ -421,7 +427,7 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, length: int, err: Er
 			// switch to next value
 			current_field += 1
 			if current_field == len(header_fields) {
-				// length is 1-index so we'll increment again
+				// header byte length is 1-index so we'll increment again
 				length += 1
 				break parse_loop
 			}
@@ -463,7 +469,7 @@ _parse_header_pnm :: proc(data: []byte) -> (header: Header, length: int, err: Er
 _parse_header_pam :: proc(data: []byte, allocator := context.allocator) -> (header: Header, length: int, err: Error) {
 	context.allocator = allocator
 
-	// the spec needs the newline
+	// the spec needs the newline apparently
 	if string(data[0:3]) != "P7\n" {
 		err = .Invalid_Signature
 		return
@@ -671,7 +677,7 @@ decode_image :: proc(header: Header, data: []byte, allocator := context.allocato
 		for d in data {
 			for b in 1 ..= 8 {
 				bit := byte(8 - b)
-				pix := (d & (1 << bit)) >> bit
+				pix := (d >> bit) & 1
 				bytes.buffer_write_byte(&img.pixels, pix)
 				if len(img.pixels.buf) % img.width == 0 {
 					break
